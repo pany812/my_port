@@ -21,11 +21,12 @@ from workbench.allocators.factory import build
 from workbench.data.align import align_history, data_vintage
 from workbench.data.base import MarketData
 from workbench.data.loaders import load_market
+from workbench.evaluation.metrics import cell_metrics
 from workbench.grid.expand import CellConfig, expand
 from workbench.grid.spec import ExperimentSpec, WindowSpec
 from workbench.policy.compiler import compile_policy
 from workbench.policy.saa import SAA
-from workbench.registry.store import CellRecord, Registry
+from workbench.registry.store import REFERENCE_ALLOCATOR, CellRecord, Registry
 
 log = logging.getLogger(__name__)
 
@@ -108,18 +109,15 @@ def run_experiment(
             window, window_error = None, str(e)
         window_end = (returns.index[-1] if window is None else window.index[-1]).date()
         for cfg in configs:
-            records.append(
-                _run_cell(
-                    cfg,
-                    exp_id,
-                    variant,
-                    window,
-                    window_end,
-                    window_error,
-                    saa,
-                    policies[cfg.constraint_set],
-                )  # fmt: skip
-            )
+            rec = _run_cell(
+                cfg, exp_id, variant, window, window_end, window_error,
+                saa, policies[cfg.constraint_set],
+            )  # fmt: skip
+            if rec.status == "ok":
+                _add_metrics(rec, window, saa, spec)
+            records.append(rec)
+        if window is not None:
+            records.append(_reference_cell(exp_id, variant, window, saa, spec))
         log.info("variant %s: %d cells fitted", variant, len(configs))
 
     registry.write_experiment(
@@ -137,10 +135,11 @@ def run_experiment(
         },
         records,
     )
-    counts = pd.Series([r.status for r in records]).value_counts().to_dict()
-    log.info("experiment %s: %d cells in %.1fs %s", exp_id, len(records),
+    grid = [r for r in records if r.allocator != REFERENCE_ALLOCATOR]
+    counts = pd.Series([r.status for r in grid]).value_counts().to_dict()
+    log.info("experiment %s: %d cells in %.1fs %s", exp_id, len(grid),
              time.perf_counter() - t0, counts)  # fmt: skip
-    return RunSummary(exp_id, spec.spec_hash, vintage, len(records), counts)
+    return RunSummary(exp_id, spec.spec_hash, vintage, len(grid), counts)
 
 
 def _run_cell(
@@ -179,4 +178,36 @@ def _run_cell(
     rec.status, rec.message, rec.elapsed_s = res.status, res.message, res.elapsed_s
     rec.diagnostics = res.diagnostics
     rec.weights = None if res.weights is None else {k: float(v) for k, v in res.weights.items()}
+    return rec
+
+
+def _add_metrics(rec: CellRecord, window: pd.DataFrame, saa: SAA, spec: ExperimentSpec) -> None:
+    """Attach evaluation metrics to an ok cell; failures go to diagnostics, status stays ok."""
+    w = pd.Series(rec.weights)
+    rec.metrics, errors = cell_metrics(
+        w, window, saa.weights, saa.candidate, spec.risk_lenses, spec.data.frequency
+    )
+    if errors:
+        rec.diagnostics = {**rec.diagnostics, "metric_errors": errors}
+
+
+def _reference_cell(
+    exp_id: str, variant: str, window: pd.DataFrame, saa: SAA, spec: ExperimentSpec
+) -> CellRecord:
+    """The SAA benchmark row for one (variant, window end). Not a grid cell."""
+    window_end = window.index[-1].date()
+    rec = CellRecord(
+        cell_id=cell_id_for(exp_id, REFERENCE_ALLOCATOR, variant, window_end),
+        cell_index=-1,
+        config_id=REFERENCE_ALLOCATOR,
+        allocator=REFERENCE_ALLOCATOR,
+        params={},
+        estimator=None,
+        constraint_set="",
+        data_variant=variant,
+        window_end=window_end,
+        status="ok",
+        weights={k: float(v) for k, v in saa.weights.items()},
+    )
+    _add_metrics(rec, window, saa, spec)
     return rec

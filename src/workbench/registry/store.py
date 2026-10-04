@@ -14,10 +14,18 @@ from sqlalchemy.orm import Session
 
 from workbench.registry.models import Base, Cell, Experiment, Metric, Weight
 
+# Pseudo-allocator for the SAA benchmark row written once per (variant, window end). It is a
+# cells row so its weights and metrics can be stored, but it is NOT a grid cell: every read
+# below excludes it unless ``include_reference=True``. Corridor counts depend on this.
+REFERENCE_ALLOCATOR = "saa_reference"
+
 
 @dataclass
 class CellRecord:
-    """Everything stored for one cell. ``weights`` is None unless status is "ok"."""
+    """Everything stored for one cell. ``weights`` is None unless status is "ok".
+
+    metrics: (metric, lens, value) triples; lens is "" when not lens-specific.
+    """
 
     cell_id: str
     cell_index: int
@@ -33,6 +41,7 @@ class CellRecord:
     elapsed_s: float = 0.0
     diagnostics: dict = field(default_factory=dict)
     weights: dict[str, float] | None = None
+    metrics: list[tuple[str, str, float]] = field(default_factory=list)
 
 
 class Registry:
@@ -85,12 +94,19 @@ class Registry:
             for c in cells
             for a, w in (c.weights or {}).items()
         ]
+        metric_rows = [
+            {"cell_id": c.cell_id, "metric": m, "lens": lens, "value": float(v)}
+            for c in cells
+            for m, lens, v in c.metrics
+        ]
         with Session(self.engine) as s, s.begin():
             s.execute(insert(Experiment), [experiment])
             if cell_rows:
                 s.execute(insert(Cell), cell_rows)
             if weight_rows:
                 s.execute(insert(Weight), weight_rows)
+            if metric_rows:
+                s.execute(insert(Metric), metric_rows)
 
     # --- reads -----------------------------------------------------------------------
 
@@ -104,26 +120,45 @@ class Registry:
                 raise KeyError(f"no experiment {experiment_id!r}")
             return {c.name: getattr(e, c.name) for c in Experiment.__table__.columns}
 
-    def cells(self, experiment_id: str) -> pd.DataFrame:
+    def cells(self, experiment_id: str, include_reference: bool = False) -> pd.DataFrame:
+        """Grid cells of an experiment (the SAA reference row only if asked)."""
         q = select(Cell).where(Cell.experiment_id == experiment_id)
+        q = _grid_only(q, include_reference)
         return self._frame(q.order_by(Cell.data_variant, Cell.window_end, Cell.cell_index))
 
-    def weights(self, experiment_id: str) -> pd.DataFrame:
+    def reference(self, experiment_id: str) -> pd.DataFrame:
+        """The SAA reference rows (one per data variant and window end)."""
+        q = select(Cell).where(
+            Cell.experiment_id == experiment_id, Cell.allocator == REFERENCE_ALLOCATOR
+        )
+        return self._frame(q.order_by(Cell.data_variant, Cell.window_end))
+
+    def weights(self, experiment_id: str, include_reference: bool = False) -> pd.DataFrame:
         """Long format: cell_id, asset_id, weight."""
         q = (
             select(Weight)
             .join(Cell, Cell.cell_id == Weight.cell_id)
             .where(Cell.experiment_id == experiment_id)
-            .order_by(Weight.cell_id, Weight.asset_id)
         )
-        return self._frame(q)
+        q = _grid_only(q, include_reference)
+        return self._frame(q.order_by(Weight.cell_id, Weight.asset_id))
 
-    def weights_wide(self, experiment_id: str) -> pd.DataFrame:
+    def weights_wide(self, experiment_id: str, include_reference: bool = False) -> pd.DataFrame:
         """One row per ok cell (index cell_id), one column per asset."""
-        long = self.weights(experiment_id)
+        long = self.weights(experiment_id, include_reference)
         if long.empty:
             return pd.DataFrame()
         return long.pivot(index="cell_id", columns="asset_id", values="weight")
+
+    def metrics(self, experiment_id: str, include_reference: bool = False) -> pd.DataFrame:
+        """Long format: cell_id, metric, lens, value."""
+        q = (
+            select(Metric)
+            .join(Cell, Cell.cell_id == Metric.cell_id)
+            .where(Cell.experiment_id == experiment_id)
+        )
+        q = _grid_only(q, include_reference)
+        return self._frame(q.order_by(Metric.cell_id, Metric.metric, Metric.lens))
 
     def _frame(self, query) -> pd.DataFrame:
         with Session(self.engine) as s:
@@ -133,6 +168,17 @@ class Registry:
                 return pd.DataFrame(columns=cols)
             table = type(rows[0]).__table__
             return pd.DataFrame([{c.name: getattr(r, c.name) for c in table.columns} for r in rows])
+
+
+def loads_or_none(value) -> dict | None:
+    """Parse a JSON column value; SQL NULL (None, or NaN after pandas 3 conversion) -> None."""
+    if value is None or (isinstance(value, float) and value != value):
+        return None
+    return json.loads(value)
+
+
+def _grid_only(query, include_reference: bool):
+    return query if include_reference else query.where(Cell.allocator != REFERENCE_ALLOCATOR)
 
 
 def _dumps(obj) -> str:
