@@ -7,7 +7,8 @@ with skfolio as a second backend (same configurations, compared in the library-a
 section). Backtesting, statistics, the registry and reporting are our own code.
 
 - Concept and context map: https://claude.ai/artifact/5QJ6JZvKZ85LLdvMuBxCg7
-- Current build scope and milestones: @docs/PHASE1.md
+- Phase 1 (complete): @docs/PHASE1.md
+- Phase 2 (current: evidence; PBO/DSR are disclosures, not gates): @docs/PHASE2.md
 
 ## The one output that matters
 
