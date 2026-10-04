@@ -78,8 +78,17 @@ or by running it on synthetic data (October 2026).
   portfolio turnover. TE and the band both use `benchweights`.
 - TE vs the SAA: `kindbench=True`, `benchweights` = one-column DataFrame indexed by asset,
   `allowTE=True`, `TE` in return frequency.
+- Riskfolio's TE is **not demeaned**: `‖R(w − b)‖_F / sqrt(T − 1)` over the fitting window
+  (root-mean-square active return), not the std of active returns. Our policy post-check
+  uses the same definition.
+- `HCPortfolio` raises `NameError` (not None) when `w_max` sums below 1 or `w_min > w_max`;
+  pre-check bounds and record `status="infeasible"`.
 - Custom expected returns: call `assets_stats(...)` first, then set
   `port.mu = mu_series.to_frame().T[returns.columns]` (1×N, per period).
+- `method_mu="JS"` returns a **complex128** mu (eigenvalues via `np.linalg.eig`, zero imaginary
+  part) and cvxpy then raises "Inequality constraints cannot be complex". Affects Classic and
+  NCO. Cast to real at the allocator boundary (`allocators/_estimates.py`); for HC compute mu
+  ourselves and pass `method_mu="custom_mu"`.
 - `model="FM"` uses the historical covariance unless `hist=False`.
 - The docstring says `model="BLFM"`; the code branch is `"BL_FM"` (`"BLFM"` fails).
   Pass `P_f` / `Q_f` as numpy arrays.
@@ -88,6 +97,9 @@ or by running it on synthetic data (October 2026).
 - `rp_optimization(b=...)`: `b` is an (n, 1) array. Check realised shares with
   `rp.Risk_Contribution` because linear constraints can stop a budget from being met.
 - `rp.hrp_constraints(...)` returns `(w_max, w_min)`; set `hc.w_max`, `hc.w_min`.
+- `rp.hrp_constraints` tests `data.loc[i, "Disabled"] is False`: with a numpy-bool `Disabled`
+  column (pandas' default) every row is **silently ignored**. Build the table with
+  `Disabled` as `object` dtype (Python bools).
 - `rp.loadings_matrix(X=factors, Y=assets)` with stepwise selection adds a `const` column;
   drop it before setting `port.B` for factor risk-contribution constraints.
 - Riskfolio-Lib has no backtester. Its single backtesting tutorial uses vectorbt.

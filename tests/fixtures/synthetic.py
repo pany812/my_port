@@ -8,6 +8,8 @@ from workbench.allocators.base import FitContext
 from workbench.data.base import MarketData
 from workbench.data.synthetic import CandidateSpec, generate, placeholder_saa
 from workbench.policy.compiled import CompiledPolicy
+from workbench.policy.compiler import ConstraintSet, compile_policy
+from workbench.policy.saa import SAA
 
 SEED = 42
 
@@ -31,10 +33,17 @@ def long_daily_market(seed: int = SEED, tail_df: float | None = None, **candidat
     )
 
 
-def fit_context(data: MarketData) -> FitContext:
+def fit_context(data: MarketData, policy: CompiledPolicy | None = None, **kw) -> FitContext:
     return FitContext(
         as_of=pd.Timestamp(data.returns.index[-1]),
         saa=placeholder_saa(data.candidate),
         candidate=data.candidate,
-        policy=CompiledPolicy(freq=data.freq),
+        policy=policy or CompiledPolicy(freq=data.freq),
+        **kw,
     )
+
+
+def policy(**constraint_set) -> CompiledPolicy:
+    """Compile a constraint set (spec keys, annual units) against the placeholder SAA."""
+    constraint_set.setdefault("name", "test")
+    return compile_policy(SAA.placeholder(), ConstraintSet.from_dict(constraint_set), freq="M")
