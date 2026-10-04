@@ -12,7 +12,7 @@ from sqlalchemy import create_engine, delete, event, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from workbench.registry.models import Base, Cell, Experiment, Metric, Weight
+from workbench.registry.models import Base, Cell, Experiment, Metric, OosReturn, Weight
 
 # Pseudo-allocator for the SAA benchmark row written once per (variant, window end). It is a
 # cells row so its weights and metrics can be stored, but it is NOT a grid cell: every read
@@ -65,10 +65,19 @@ class Registry:
             s.execute(delete(Weight).where(Weight.cell_id.in_(cell_ids)))
             s.execute(delete(Metric).where(Metric.cell_id.in_(cell_ids)))
             s.execute(delete(Cell).where(Cell.experiment_id == experiment_id))
+            s.execute(delete(OosReturn).where(OosReturn.experiment_id == experiment_id))
             s.execute(delete(Experiment).where(Experiment.experiment_id == experiment_id))
 
-    def write_experiment(self, experiment: dict, cells: Iterable[CellRecord]) -> None:
-        """Insert the experiment row, its cells and their weights atomically (in FK order)."""
+    def write_experiment(
+        self,
+        experiment: dict,
+        cells: Iterable[CellRecord],
+        oos_rows: Iterable[dict] = (),
+    ) -> None:
+        """Insert the experiment, its cells, weights, metrics and OOS paths atomically.
+
+        oos_rows: dicts with config_id, data_variant, date, portfolio_return, turnover.
+        """
         cells = list(cells)
         cell_rows = [
             {
@@ -107,6 +116,9 @@ class Registry:
                 s.execute(insert(Weight), weight_rows)
             if metric_rows:
                 s.execute(insert(Metric), metric_rows)
+            oos = [{"experiment_id": experiment["experiment_id"], **r} for r in oos_rows]
+            if oos:
+                s.execute(insert(OosReturn), oos)
 
     # --- reads -----------------------------------------------------------------------
 
@@ -159,6 +171,14 @@ class Registry:
         )
         q = _grid_only(q, include_reference)
         return self._frame(q.order_by(Metric.cell_id, Metric.metric, Metric.lens))
+
+    def oos_returns(self, experiment_id: str, include_reference: bool = False) -> pd.DataFrame:
+        """Long format: config_id, data_variant, date, portfolio_return, turnover."""
+        q = select(OosReturn).where(OosReturn.experiment_id == experiment_id)
+        if not include_reference:
+            q = q.where(OosReturn.config_id != REFERENCE_ALLOCATOR)
+        q = q.order_by(OosReturn.data_variant, OosReturn.config_id, OosReturn.date)
+        return self._frame(q).drop(columns="experiment_id")
 
     def _frame(self, query) -> pd.DataFrame:
         with Session(self.engine) as s:

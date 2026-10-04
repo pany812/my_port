@@ -22,6 +22,7 @@ funding: pro_rata
 rf_annual: 0.0
 window: {kind: rolling, periods: 120}
 rebalance: {kind: calendar, every: M}
+backtest: {mode: walk_forward}   # in_sample: a single fit at the end of the data
 grid:
   estimators:
     - {method_mu: hist, method_cov: ledoit}

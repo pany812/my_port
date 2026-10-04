@@ -69,6 +69,15 @@ class RebalanceSpec:
 
 
 @dataclass(frozen=True)
+class BacktestSpec:
+    """walk_forward: fit at every rebalance date, out-of-sample path (default).
+    in_sample: a single fit at the end of the data, no path. ``start``: first rebalance date."""
+
+    mode: str = "walk_forward"
+    start: str | None = None
+
+
+@dataclass(frozen=True)
 class AllocatorEntry:
     """One allocator block; every param value is a list of alternatives (grid dimension)."""
 
@@ -85,6 +94,7 @@ class ExperimentSpec:
     funding: str
     window: WindowSpec
     rebalance: RebalanceSpec
+    backtest: BacktestSpec
     estimators: tuple[dict[str, str], ...]
     allocators: tuple[AllocatorEntry, ...]
     constraint_sets: tuple[ConstraintSet, ...]
@@ -102,6 +112,7 @@ class ExperimentSpec:
             "funding": self.funding,
             "window": asdict(self.window),
             "rebalance": asdict(self.rebalance),
+            "backtest": asdict(self.backtest),
             "grid": {
                 "estimators": [dict(e) for e in self.estimators],
                 "allocators": [{"type": a.type, **a.params} for a in self.allocators],
@@ -144,7 +155,7 @@ def parse_spec(src: str | dict) -> ExperimentSpec:
         raw,
         "",
         required={"experiment", "seed", "data", "saa", "window", "grid"},
-        optional={"funding", "rebalance", "risk_lenses", "rf_annual", "solvers"},
+        optional={"funding", "rebalance", "backtest", "risk_lenses", "rf_annual", "solvers"},
     )
     data = _data(top["data"])
     grid = _keys(
@@ -168,9 +179,8 @@ def parse_spec(src: str | dict) -> ExperimentSpec:
         saa_version=str(saa["version"]),
         funding=str(funding),
         window=_window(top["window"]),
-        rebalance=RebalanceSpec(
-            **_keys(top.get("rebalance", {}), "rebalance", optional={"kind", "every"})
-        ),  # fmt: skip
+        rebalance=_rebalance(top.get("rebalance", {}), data.frequency),
+        backtest=_backtest(top.get("backtest", {})),
         estimators=estimators,
         allocators=allocators,
         constraint_sets=constraint_sets,
@@ -227,6 +237,27 @@ def _window(d: Any) -> WindowSpec:
     else:
         raise SpecError(f"window.kind must be 'rolling' or 'expanding', got {d['kind']!r}")
     return WindowSpec(**d)
+
+
+def _rebalance(d: Any, data_freq: str) -> RebalanceSpec:
+    d = _keys(d, "rebalance", optional={"kind", "every"})
+    spec = RebalanceSpec(**d)
+    if spec.kind != "calendar":
+        raise SpecError(f"rebalance.kind must be 'calendar', got {spec.kind!r}")
+    if spec.every not in ("M", "Q", "A"):
+        raise SpecError(f"rebalance.every must be M, Q or A, got {spec.every!r}")
+    if periods_per_year(spec.every) > periods_per_year(data_freq):
+        raise SpecError(f"rebalance.every {spec.every} is finer than data.frequency {data_freq}")
+    return spec
+
+
+def _backtest(d: Any) -> BacktestSpec:
+    d = _keys(d, "backtest", optional={"mode", "start"})
+    if d.get("mode", "walk_forward") not in ("walk_forward", "in_sample"):
+        raise SpecError(f"backtest.mode must be walk_forward or in_sample, got {d['mode']!r}")
+    if d.get("start") is not None:
+        d["start"] = _period_str(d["start"])
+    return BacktestSpec(**d)
 
 
 def _allocator(d: Any, path: str, funding: str) -> AllocatorEntry:

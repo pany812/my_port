@@ -1,6 +1,7 @@
-"""Golden determinism test: fixed spec + seed => identical spec_hash and weights.
+"""Golden determinism test: fixed spec + seed => identical spec_hash, weights, paths, corridor.
 
-Regenerate the golden file deliberately (and review the diff) with:
+Uses the small ``tests/golden/golden_spec.yaml`` (walk-forward, and the same spec in in-sample
+mode) so ``pytest -q`` stays fast. Regenerate deliberately, then review the diff:
     WB_UPDATE_GOLDEN=1 uv run pytest tests/test_golden.py
 """
 
@@ -9,70 +10,88 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+import yaml
 
 from workbench.evaluation.corridor import corridor
 from workbench.grid.runner import run_experiment
-from workbench.grid.spec import load_spec
+from workbench.grid.spec import parse_spec
 from workbench.registry.store import Registry
 
-ROOT = Path(__file__).parents[1]
-SPEC = ROOT / "specs" / "example_synthetic.yaml"
-GOLDEN = ROOT / "tests" / "golden" / "example_synthetic_weights.csv"
-GOLDEN_CORRIDOR = ROOT / "tests" / "golden" / "example_synthetic_corridor.csv"
+GOLDEN_DIR = Path(__file__).parent / "golden"
+SPEC_TEXT = (GOLDEN_DIR / "golden_spec.yaml").read_text()
 
-# Changing the spec file or the canonical form changes this on purpose; update both together.
-EXPECTED_SPEC_HASH = "d789b58883e7cd41b46a0948ffcd5a625f686955060a49c32c378835d9730e79"
+# Changing the spec file or the canonical form changes these on purpose; update them together.
+EXPECTED_SPEC_HASH = {
+    "walk_forward": "617e84e6ac105c1182efd4f7e44e4b6eeac9dd15c987bf195e505a346e0b889a",
+    "in_sample": "f71b1ad924c8003be8e870ea07f3039930a37baa13b48f136c194488a5c42bee",
+}
+KEYS = ("status", "weights", "oos", "corridor")
 
 
-def _weights(tmp_path, name):
+def _spec(mode: str):
+    if mode == "walk_forward":
+        return parse_spec(SPEC_TEXT)
+    raw = yaml.safe_load(SPEC_TEXT)
+    raw["backtest"]["mode"] = mode
+    return parse_spec(raw)
+
+
+def _snapshot(tmp_path, mode: str, name: str) -> dict:
     reg = Registry(f"sqlite:///{tmp_path / name}")
-    s = run_experiment(load_spec(SPEC), reg)
-    cells = reg.cells(s.experiment_id)[["cell_id", "config_id", "data_variant", "status"]]
-    w = reg.weights(s.experiment_id).merge(cells, on="cell_id")
-    w = w[["data_variant", "config_id", "asset_id", "weight"]]
-    w = w.sort_values(["data_variant", "config_id", "asset_id"]).reset_index(drop=True)
-    return s, cells, w, corridor(reg, s.experiment_id)
+    s = run_experiment(_spec(mode), reg)
+    cells = reg.cells(s.experiment_id)
+    keys = ["data_variant", "window_end", "config_id"]
+    w = reg.weights(s.experiment_id).merge(cells[["cell_id", *keys]], on="cell_id")
+    w = w[[*keys, "asset_id", "weight"]]
+    return {
+        "summary": s,
+        "status": cells[[*keys, "status"]].sort_values(keys).reset_index(drop=True),
+        "weights": w.sort_values([*keys, "asset_id"]).reset_index(drop=True),
+        "oos": reg.oos_returns(s.experiment_id, include_reference=True).reset_index(drop=True),
+        "corridor": corridor(reg, s.experiment_id),
+    }
 
 
-@pytest.fixture(scope="module")
-def runs(tmp_path_factory):
-    tmp = tmp_path_factory.mktemp("golden")
-    return _weights(tmp, "a.db"), _weights(tmp, "b.db")
+@pytest.fixture(scope="module", params=["walk_forward", "in_sample"])
+def runs(request, tmp_path_factory):
+    tmp = tmp_path_factory.mktemp(request.param)
+    mode = request.param
+    return mode, _snapshot(tmp, mode, "a.db"), _snapshot(tmp, mode, "b.db")
 
 
-def test_spec_hash_pinned():
-    assert load_spec(SPEC).spec_hash == EXPECTED_SPEC_HASH
+def test_spec_hash_pinned(runs):
+    mode, a, _ = runs
+    assert a["summary"].spec_hash == EXPECTED_SPEC_HASH[mode]
 
 
-def test_identical_weights_across_runs(runs):
-    (sa, ca, wa, cora), (sb, cb, wb, corb) = runs
-    assert sa.experiment_id == sb.experiment_id
-    pd.testing.assert_frame_equal(ca, cb)
-    pd.testing.assert_frame_equal(wa, wb, check_exact=True)
-    pd.testing.assert_frame_equal(cora, corb, check_exact=True)
+def test_identical_across_runs(runs):
+    _, a, b = runs
+    assert a["summary"].experiment_id == b["summary"].experiment_id
+    for key in KEYS:
+        pd.testing.assert_frame_equal(a[key], b[key], check_exact=True)
 
 
-def test_weights_match_golden_file(runs):
-    _, _, w, _ = runs[0]
+@pytest.mark.parametrize("key", KEYS)
+def test_matches_golden_files(runs, key):
+    mode, a, _ = runs
+    frame = a[key].copy()
+    for col in ("window_end", "date"):
+        if col in frame:
+            frame[col] = frame[col].astype(str)
+    path = GOLDEN_DIR / f"{mode}_{key}.csv"
     if os.environ.get("WB_UPDATE_GOLDEN") == "1":
-        GOLDEN.parent.mkdir(exist_ok=True)
-        w.to_csv(GOLDEN, index=False, float_format="%.12g")
-        pytest.skip("golden file regenerated")
-    golden = pd.read_csv(GOLDEN)
+        frame.to_csv(path, index=False, float_format="%.12g")
+        pytest.skip(f"regenerated {path.name}")
+    golden = pd.read_csv(path, dtype={"window_end": str, "date": str})
+    assert list(golden.columns) == list(frame.columns)
+    assert len(golden) == len(frame)
+    num = [c for c in frame.columns if pd.api.types.is_numeric_dtype(frame[c])]
+    other = [c for c in frame.columns if c not in num]
     pd.testing.assert_frame_equal(
-        w[["data_variant", "config_id", "asset_id"]],
-        golden[["data_variant", "config_id", "asset_id"]],
+        frame[other].astype(str).reset_index(drop=True),
+        golden[other].astype(str).reset_index(drop=True),
     )
-    assert (w["weight"] - golden["weight"]).abs().max() < 1e-8
-
-
-def test_corridor_matches_golden_file(runs):
-    c = runs[0][3].copy()
-    c["window_end"] = c["window_end"].astype(str)
-    if os.environ.get("WB_UPDATE_GOLDEN") == "1":
-        c.to_csv(GOLDEN_CORRIDOR, index=False, float_format="%.12g")
-        pytest.skip("golden corridor regenerated")
-    golden = pd.read_csv(GOLDEN_CORRIDOR, dtype={"window_end": str})
-    num = c.select_dtypes("number").columns
-    pd.testing.assert_frame_equal(c.drop(columns=num), golden.drop(columns=num))
-    assert ((c[num] - golden[num]).abs().fillna(0) < 1e-8).all().all()
+    diff = (frame[num].astype(float) - golden[num].astype(float)).abs().fillna(0.0)
+    both_nan = frame[num].isna().to_numpy() == golden[num].isna().to_numpy()
+    assert both_nan.all(), "NaN pattern differs from golden"
+    assert (diff < 1e-8).all().all(), diff.max()

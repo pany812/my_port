@@ -24,6 +24,7 @@ data:
   synthetic: {live_start: 2016-01}
 saa: {version: example}
 window: {kind: rolling, periods: 60}
+backtest: {mode: in_sample}
 grid:
   estimators: [{method_mu: hist, method_cov: ledoit}]
   allocators:

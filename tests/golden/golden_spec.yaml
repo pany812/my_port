@@ -1,0 +1,29 @@
+# Golden determinism spec: small and fast, exercises walk-forward and in-sample paths,
+# both data variants, a forced policy failure (saa_plus 0.15 > cap) and HC under TE.
+experiment: golden
+seed: 20261004
+data:
+  source: synthetic
+  frequency: M
+  start: 2011-01
+  end: 2020-12
+  base_currency: SEK
+  hedging: "synthetic placeholder"
+  candidate: CAND
+  synthetic: {corr_to_equity: 0.2, skew: 0.3, live_start: 2015-01, tail_df: 6}
+saa: {version: example}
+window: {kind: rolling, periods: 60}
+rebalance: {kind: calendar, every: Q}
+backtest: {mode: walk_forward}
+grid:
+  estimators:
+    - {method_mu: hist, method_cov: ledoit}
+  allocators:
+    - {type: static_saa}
+    - {type: saa_plus, x: [0.05, 0.15]}
+    - {type: riskfolio_mean_risk, rm: [MV, CVaR], obj: [MinRisk]}
+    - {type: riskfolio_hc, model: [HRP]}
+  constraint_sets:
+    - {name: cap10, candidate_cap: 0.10}
+    - {name: te_2pct, te_annual: 0.02, candidate_cap: 0.10}
+risk_lenses: [MV, CVaR, CDaR]

@@ -1,7 +1,8 @@
 """SQLAlchemy models. SQLite in tests, PostgreSQL in production.
 
-Schema per docs/PHASE1.md plus four approved ``cells`` columns: ``config_id``, ``cell_index``,
-``data_variant`` and ``diagnostics_json``. Ask before changing it.
+Schema per docs/PHASE1.md plus four approved ``cells`` columns (``config_id``, ``cell_index``,
+``data_variant``, ``diagnostics_json``) and the approved ``oos_returns`` table (M5).
+Ask before changing it.
 """
 
 from __future__ import annotations
@@ -71,3 +72,18 @@ class Metric(Base):
     metric: Mapped[str] = mapped_column(String(100), primary_key=True)
     lens: Mapped[str] = mapped_column(String(50), primary_key=True, default="")
     value: Mapped[float] = mapped_column(Float)
+
+
+class OosReturn(Base):
+    """Out-of-sample walk-forward path per configuration (and the SAA reference path)."""
+
+    __tablename__ = "oos_returns"
+
+    experiment_id: Mapped[str] = mapped_column(
+        ForeignKey("experiments.experiment_id", ondelete="CASCADE"), primary_key=True
+    )
+    config_id: Mapped[str] = mapped_column(String(16), primary_key=True)
+    data_variant: Mapped[str] = mapped_column(String(20), primary_key=True)
+    date: Mapped[dt.date] = mapped_column(Date, primary_key=True)
+    portfolio_return: Mapped[float] = mapped_column(Float)
+    turnover: Mapped[float] = mapped_column(Float, default=0.0)
