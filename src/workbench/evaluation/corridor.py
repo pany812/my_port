@@ -42,7 +42,7 @@ def cell_frame(registry: Registry, experiment_id: str) -> pd.DataFrame:
     params = cells["params_json"].map(json.loads)
     est = cells["estimator_json"].map(loads_or_none)
     df["family"] = df["allocator"].map(FAMILIES).fillna("other")
-    df["rm"] = params.map(lambda p: p.get("rm", ""))
+    df["rm"] = params.map(lambda p: p.get("rm", "n/a"))
     df["estimator"] = est.map(
         lambda e: "none" if e is None else f"{e['method_mu']}/{e['method_cov']}"
     )

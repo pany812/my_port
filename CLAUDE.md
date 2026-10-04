@@ -122,6 +122,17 @@ or by running it on synthetic data (October 2026).
 - Data: Bloomberg (blpapi) → PostgreSQL. TODO(Patrik): schema and tables for building-block and
   candidate returns. Loaders read from PostgreSQL only; no live Bloomberg calls in this package.
 - UI: Streamlit over the registry. Phase 2, not now.
+- skfolio (decided 2026-10-04): add as a **second backend** after Phase 1 (`skfolio_mean_risk`,
+  `skfolio_hc` behind the same `Allocator` protocol; grid gains a "library" dimension). Not yet a
+  dependency. Verified on synthetic data with skfolio 1.4.11 (co-installs with
+  riskfolio-lib 7.4.0; scipy moves 1.17.1 -> 1.18.1, re-verify golden files):
+  `max_turnover` + `previous_weights` is an element-wise band (same as `allowTO`);
+  `max_tracking_error` with `y = R @ SAA` uses the same non-demeaned RMS/(T-1) TE as Riskfolio;
+  class limits via `groups` + `linear_constraints`; no stdout output. Traps: an infeasible problem
+  raises a generic `SolverError` (or `weights_=None` with `raise_on_failure=False`) and keeps no
+  `problem_`, so infeasible vs solver error needs our own feasibility pre-check;
+  `Portfolio.contribution` is not Euler-additive (variance sums to 2x, CDaR ~1.5% off), so keep
+  risk shares on Riskfolio-Lib/our code.
 
 ## Working style
 

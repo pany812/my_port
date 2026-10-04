@@ -132,6 +132,22 @@ class Registry:
                 raise KeyError(f"no experiment {experiment_id!r}")
             return {c.name: getattr(e, c.name) for c in Experiment.__table__.columns}
 
+    def resolve(self, name_or_id: str) -> str:
+        """Experiment id for an id, or for the most recent experiment with that name."""
+        with Session(self.engine) as s:
+            if s.get(Experiment, name_or_id) is not None:
+                return name_or_id
+            q = (
+                select(Experiment.experiment_id)
+                .where(Experiment.name == name_or_id)
+                .order_by(Experiment.created_at.desc())
+                .limit(1)
+            )
+            found = s.execute(q).scalar_one_or_none()
+        if found is None:
+            raise KeyError(f"no experiment with id or name {name_or_id!r}")
+        return found
+
     def cells(self, experiment_id: str, include_reference: bool = False) -> pd.DataFrame:
         """Grid cells of an experiment (the SAA reference row only if asked)."""
         q = select(Cell).where(Cell.experiment_id == experiment_id)
