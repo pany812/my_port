@@ -29,7 +29,7 @@ from workbench.data.loaders import load_market
 from workbench.evaluation.evidence import path_evidence, spanning_evidence
 from workbench.evaluation.metrics import cell_metrics
 from workbench.grid.expand import CellConfig, expand
-from workbench.grid.spec import ExperimentSpec, WindowSpec
+from workbench.grid.spec import ExperimentSpec, SpecError, WindowSpec
 from workbench.policy.compiled import CompiledPolicy
 from workbench.policy.compiler import compile_policy
 from workbench.policy.saa import SAA
@@ -198,7 +198,15 @@ def _walk_forward_variant(
         end = returns.index[-1]
         return [_failed_cell(ctx, cfg, variant, end, msg) for cfg in configs], [], {}, None
 
-    engine = WalkForwardEngine(spec.window)
+    costs = _cost_series(spec, ctx.saa)
+    threshold = spec.rebalance.band if spec.rebalance.kind == "threshold" else None
+
+    def engine_for(policy: CompiledPolicy | None) -> WalkForwardEngine:
+        return WalkForwardEngine(
+            spec.window, costs=costs, liquidity=spec.liquidity, candidate=ctx.saa.candidate,
+            threshold=threshold, check=None if policy is None else policy.violations,
+        )  # fmt: skip
+
     records: list[CellRecord] = []
     rows: list[dict] = []
     paths: dict[str, pd.Series] = {}
@@ -209,17 +217,20 @@ def _walk_forward_variant(
         except Exception as e:  # construction failure: every rebalance fails, SAA is held
             err = f"{type(e).__name__}: {e}"
             fit_fn = _failing_fit_fn(err)
+        engine = engine_for(ctx.policies[cfg.constraint_set])
         path = engine.run(returns, schedule, fit_fn, fallback=ctx.saa.weights)
         for f in path.fits:
-            records.append(_cell_from_result(ctx, cfg, variant, f.as_of, f.window, f.result))
+            rec = _cell_from_result(ctx, cfg, variant, f.as_of, f.window, f.result)
+            _add_execution(rec, f)
+            records.append(rec)
         rows += _path_rows(cfg.config_id, variant, path)
-        paths[cfg.config_id] = path.returns
+        paths[cfg.config_id] = path.returns_net
 
-    ref_path = engine.run(returns, schedule, _saa_fit_fn(ctx), fallback=ctx.saa.weights)
+    ref_path = engine_for(None).run(returns, schedule, _saa_fit_fn(ctx), fallback=ctx.saa.weights)
     for f in ref_path.fits:
         records.append(_reference_cell(ctx, variant, f.window))
     rows += _path_rows(REFERENCE_ALLOCATOR, variant, ref_path)
-    return records, rows, paths, ref_path.returns
+    return records, rows, paths, ref_path.returns_net
 
 
 def _fit_fn(ctx: _Context, cfg: CellConfig, allocator):
@@ -244,11 +255,34 @@ def _saa_fit_fn(ctx: _Context):
 
 
 def _path_rows(config_id: str, variant: str, path: PathResult) -> list[dict]:
+    net = path.returns_net
     return [
         {"config_id": config_id, "data_variant": variant, "date": d.date(),
-         "portfolio_return": float(r), "turnover": float(t)}
-        for d, r, t in zip(path.returns.index, path.returns, path.turnover, strict=True)
+         "portfolio_return": float(r), "turnover": float(t), "cost": float(c),
+         "portfolio_return_net": float(n), "liquidity_adjusted": bool(a)}
+        for d, r, t, c, n, a in zip(path.returns.index, path.returns, path.turnover, path.cost,
+                                    net, path.liquidity_adjusted, strict=True)
     ]  # fmt: skip
+
+
+def _cost_series(spec: ExperimentSpec, saa: SAA) -> pd.Series | None:
+    """One-way cost per asset as a decimal of traded weight (spec bps / 10,000)."""
+    if spec.costs is None:
+        return None
+    unknown = set(spec.costs.per_asset or {}) - set(saa.assets)
+    if unknown:
+        raise SpecError(f"costs.per_asset: unknown assets {sorted(unknown)}")
+    return pd.Series({a: spec.costs.bps(a) / 10_000.0 for a in saa.assets})
+
+
+def _add_execution(rec: CellRecord, fit) -> None:
+    """Record what the engine executed when it differs from the fitted weights."""
+    if not fit.traded:
+        rec.diagnostics = {**rec.diagnostics, "traded": False}
+    if fit.liquidity_adjusted:
+        rec.diagnostics = {**rec.diagnostics, "liquidity_adjusted": True}
+        if fit.adjustment_violations:
+            rec.diagnostics["adjustment_violations"] = list(fit.adjustment_violations)
 
 
 # --- cells -----------------------------------------------------------------------------

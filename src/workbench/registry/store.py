@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 import pandas as pd
-from sqlalchemy import create_engine, delete, event, insert, select
+from sqlalchemy import create_engine, delete, event, insert, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
@@ -44,14 +44,67 @@ class CellRecord:
     metrics: list[tuple[str, str, float]] = field(default_factory=list)
 
 
-class Registry:
-    """Experiment registry over any SQLAlchemy URL (``sqlite:///path.db``, ``postgresql://...``)."""
+class RegistrySchemaError(RuntimeError):
+    """The registry database predates columns this version writes; run ``wb migrate``."""
 
-    def __init__(self, url: str) -> None:
+
+# Values for columns added after a table first shipped, for rows written before them. Each is
+# exact for older rows (e.g. experiments before P2-M2 had no costs, so net == gross).
+BACKFILL: dict[tuple[str, str], str] = {
+    ("oos_returns", "cost"): "0.0",
+    ("oos_returns", "portfolio_return_net"): "portfolio_return",
+    ("oos_returns", "liquidity_adjusted"): "0",
+}
+
+
+class Registry:
+    """Experiment registry over any SQLAlchemy URL (``sqlite:///path.db``, ``postgresql://...``).
+
+    Opening an existing database whose tables lack columns of the current models raises
+    :class:`RegistrySchemaError` (pass ``check=False`` to open it for :meth:`migrate`).
+    """
+
+    def __init__(self, url: str, check: bool = True) -> None:
+        self.url = url
         self.engine: Engine = create_engine(url)
         if self.engine.dialect.name == "sqlite":
             event.listen(self.engine, "connect", _sqlite_foreign_keys)
         Base.metadata.create_all(self.engine)
+        drift = self.schema_drift()
+        if check and drift:
+            missing = "; ".join(f"{t}: {', '.join(c)}" for t, c in drift.items())
+            raise RegistrySchemaError(
+                f"registry {url} predates this version (missing columns: {missing}). "
+                f"Run: wb migrate --registry {url}"
+            )
+
+    def schema_drift(self) -> dict[str, list[str]]:
+        """Columns defined in the models but missing from the database, per table."""
+        insp = inspect(self.engine)
+        drift = {}
+        for table in Base.metadata.sorted_tables:
+            have = {c["name"] for c in insp.get_columns(table.name)}
+            missing = [c.name for c in table.columns if c.name not in have]
+            if missing:
+                drift[table.name] = missing
+        return drift
+
+    def migrate(self) -> list[str]:
+        """Add missing columns (additive only) and backfill them. Returns the actions taken."""
+        actions = []
+        with self.engine.begin() as conn:
+            for table_name, columns in self.schema_drift().items():
+                table = Base.metadata.tables[table_name]
+                for name in columns:
+                    col = table.columns[name]
+                    ddl_type = col.type.compile(dialect=self.engine.dialect)
+                    conn.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {name} {ddl_type}"))
+                    fill = BACKFILL.get((table_name, name))
+                    if fill is not None:
+                        conn.execute(text(f"UPDATE {table_name} SET {name} = {fill}"))
+                    actions.append(f"{table_name}.{name} added"
+                                   + (f", backfilled = {fill}" if fill else ""))  # fmt: skip
+        return actions
 
     # --- writes ----------------------------------------------------------------------
 
@@ -195,7 +248,8 @@ class Registry:
         return self._frame(q.order_by(Metric.cell_id, Metric.metric, Metric.lens))
 
     def oos_returns(self, experiment_id: str, include_reference: bool = False) -> pd.DataFrame:
-        """Long format: config_id, data_variant, date, portfolio_return, turnover."""
+        """Long format: config_id, data_variant, date, portfolio_return (gross), turnover, cost,
+        portfolio_return_net, liquidity_adjusted."""
         q = select(OosReturn).where(OosReturn.experiment_id == experiment_id)
         if not include_reference:
             q = q.where(OosReturn.config_id != REFERENCE_ALLOCATOR)

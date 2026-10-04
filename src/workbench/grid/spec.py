@@ -64,8 +64,35 @@ class WindowSpec:
 
 @dataclass(frozen=True)
 class RebalanceSpec:
+    """calendar: trade to the new target at every ``every`` date. threshold: fit at every
+    ``every`` date but trade only when some asset drifts more than ``band`` (decimal weight)
+    from the target."""
+
     kind: str = "calendar"
     every: str = "M"
+    band: float | None = None
+
+
+@dataclass(frozen=True)
+class CostsSpec:
+    """One-way transaction costs in basis points of traded weight, per building block."""
+
+    default_bps: float = 0.0
+    per_asset: dict[str, float] | None = None
+
+    def bps(self, asset: str) -> float:
+        return float((self.per_asset or {}).get(asset, self.default_bps))
+
+
+@dataclass(frozen=True)
+class LiquiditySpec:
+    """Candidate dealing terms. dealing: M/Q/A calendar of dealing dates. notice_periods:
+    dealing dates between a redemption decision and its execution. gate: maximum fraction of
+    the candidate position redeemable per dealing date (None = no gate)."""
+
+    dealing: str = "M"
+    notice_periods: int = 0
+    gate: float | None = None
 
 
 @dataclass(frozen=True)
@@ -99,19 +126,28 @@ class ExperimentSpec:
     allocators: tuple[AllocatorEntry, ...]
     constraint_sets: tuple[ConstraintSet, ...]
     risk_lenses: tuple[str, ...]
+    costs: CostsSpec | None = None
+    liquidity: LiquiditySpec | None = None
     rf_annual: float = 0.0
     solvers: tuple[str, ...] = ("CLARABEL",)
     source_text: str | None = None  # raw YAML as written; stored in the registry, not hashed
 
     def canonical(self) -> dict[str, Any]:
-        """Normalised, JSON-serialisable form with every default filled in (no name, no text)."""
-        return {
+        """Normalised, JSON-serialisable form with every default filled in (no name, no text).
+
+        Optional sections added after Phase 1 (costs, liquidity, rebalance.band) enter only when
+        set, so specs that do not use them keep their spec_hash.
+        """
+        rebalance = asdict(self.rebalance)
+        if rebalance["band"] is None:
+            del rebalance["band"]
+        out = {
             "seed": self.seed,
             "data": asdict(self.data),
             "saa": {"version": self.saa_version},
             "funding": self.funding,
             "window": asdict(self.window),
-            "rebalance": asdict(self.rebalance),
+            "rebalance": rebalance,
             "backtest": asdict(self.backtest),
             "grid": {
                 "estimators": [dict(e) for e in self.estimators],
@@ -122,6 +158,11 @@ class ExperimentSpec:
             "rf_annual": self.rf_annual,
             "solvers": list(self.solvers),
         }
+        if self.costs is not None:
+            out["costs"] = asdict(self.costs)
+        if self.liquidity is not None:
+            out["liquidity"] = asdict(self.liquidity)
+        return out
 
     @property
     def spec_hash(self) -> str:
@@ -155,7 +196,16 @@ def parse_spec(src: str | dict) -> ExperimentSpec:
         raw,
         "",
         required={"experiment", "seed", "data", "saa", "window", "grid"},
-        optional={"funding", "rebalance", "backtest", "risk_lenses", "rf_annual", "solvers"},
+        optional={
+            "funding",
+            "rebalance",
+            "backtest",
+            "risk_lenses",
+            "rf_annual",
+            "solvers",
+            "costs",
+            "liquidity",
+        },
     )
     data = _data(top["data"])
     grid = _keys(
@@ -181,6 +231,8 @@ def parse_spec(src: str | dict) -> ExperimentSpec:
         window=_window(top["window"]),
         rebalance=_rebalance(top.get("rebalance", {}), data.frequency),
         backtest=_backtest(top.get("backtest", {})),
+        costs=_costs(top["costs"]) if "costs" in top else None,
+        liquidity=_liquidity(top["liquidity"], data.frequency) if "liquidity" in top else None,
         estimators=estimators,
         allocators=allocators,
         constraint_sets=constraint_sets,
@@ -240,14 +292,43 @@ def _window(d: Any) -> WindowSpec:
 
 
 def _rebalance(d: Any, data_freq: str) -> RebalanceSpec:
-    d = _keys(d, "rebalance", optional={"kind", "every"})
+    d = _keys(d, "rebalance", optional={"kind", "every", "band"})
     spec = RebalanceSpec(**d)
-    if spec.kind != "calendar":
-        raise SpecError(f"rebalance.kind must be 'calendar', got {spec.kind!r}")
+    if spec.kind not in ("calendar", "threshold"):
+        raise SpecError(f"rebalance.kind must be 'calendar' or 'threshold', got {spec.kind!r}")
+    if spec.kind == "threshold" and not (isinstance(spec.band, int | float) and spec.band > 0):
+        raise SpecError("rebalance.band must be a positive weight for kind: threshold")
+    if spec.kind == "calendar" and spec.band is not None:
+        raise SpecError("rebalance.band is only used with kind: threshold")
     if spec.every not in ("M", "Q", "A"):
         raise SpecError(f"rebalance.every must be M, Q or A, got {spec.every!r}")
     if periods_per_year(spec.every) > periods_per_year(data_freq):
         raise SpecError(f"rebalance.every {spec.every} is finer than data.frequency {data_freq}")
+    return spec
+
+
+def _costs(d: Any) -> CostsSpec:
+    d = _keys(d, "costs", optional={"default_bps", "per_asset"})
+    spec = CostsSpec(
+        default_bps=float(d.get("default_bps", 0.0)),
+        per_asset={str(k): float(v) for k, v in (d.get("per_asset") or {}).items()} or None,
+    )
+    if spec.default_bps < 0 or any(v < 0 for v in (spec.per_asset or {}).values()):
+        raise SpecError("costs must be >= 0 bps")
+    return spec
+
+
+def _liquidity(d: Any, data_freq: str) -> LiquiditySpec:
+    d = _keys(d, "liquidity", optional={"dealing", "notice_periods", "gate"})
+    spec = LiquiditySpec(**d)
+    if spec.dealing not in ("M", "Q", "A"):
+        raise SpecError(f"liquidity.dealing must be M, Q or A, got {spec.dealing!r}")
+    if periods_per_year(spec.dealing) > periods_per_year(data_freq):
+        raise SpecError(f"liquidity.dealing {spec.dealing} is finer than data.frequency")
+    if not isinstance(spec.notice_periods, int) or spec.notice_periods < 0:
+        raise SpecError("liquidity.notice_periods must be an integer >= 0")
+    if spec.gate is not None and not 0 < spec.gate <= 1:
+        raise SpecError("liquidity.gate must be in (0, 1]")
     return spec
 
 

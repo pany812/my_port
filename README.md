@@ -31,6 +31,10 @@ uv run wb report synthetic_trend_v1       # rebuild the report from the registry
 | `expost.csv` | in-sample statistics per cell and rebalance date (diagnostic only) |
 | `summary.md` | provenance, cell counts, corridor (latest and through time), group-by views, failures, OOS vs SAA, **evidence net of search** (Sharpe test vs SAA with BH-adjusted p, deflated Sharpe, PBO, spanning), live-only variant, definitions |
 
+If a registry was created by an older version, `wb` refuses to write to it and asks for
+`wb migrate`, which adds the new columns and backfills them exactly (older experiments had no
+frictions, so net = gross).
+
 Re-running an identical spec on identical data is skipped (`--if-exists replace` to redo):
 `experiment_id` is a hash of the spec, the data vintage and the Riskfolio-Lib version.
 
@@ -62,10 +66,12 @@ data:
     backfill: true                   # false: NaN before live_start (history is trimmed)
     tail_df: 6                       # optional fat tails for the building blocks
 saa: {version: example}
-funding: pro_rata                    # how saa_plus funds the candidate (Phase 1: pro_rata only)
+funding: pro_rata                    # saa_plus default: pro_rata | asset:<id> | class:<name>
 rf_annual: 0.0
 window: {kind: rolling, periods: 120}          # or {kind: expanding, min_periods: 36}
-rebalance: {kind: calendar, every: M}          # M | Q | A
+rebalance: {kind: calendar, every: M}          # M | Q | A; or {kind: threshold, every: M, band: 0.01}
+costs: {default_bps: 5, per_asset: {EM_EQ: 20, CAND: 0}}  # optional: one-way bps of traded weight
+liquidity: {dealing: Q, notice_periods: 1, gate: 0.25}   # optional: the candidate's dealing terms
 backtest: {mode: walk_forward, start: null}    # walk_forward (default) | in_sample
 grid:
   estimators:                        # applied to Riskfolio-Lib allocators only
@@ -87,6 +93,14 @@ grid:
 risk_lenses: [MV, CVaR, CDaR]        # lenses for the candidate's risk share
 solvers: [CLARABEL]
 ```
+
+**Frictions (optional).** `costs` are charged on every trade (the SAA path pays them too) and all
+out-of-sample results and evidence use net returns. `liquidity` lets the candidate trade only on
+dealing dates (the other assets are rescaled around its frozen weight), delays redemptions by
+`notice_periods` dealing dates and caps each redemption at `gate` of the position. A
+`threshold` rebalance fits at every date but trades only beyond `band` drift. `funding` in a
+`saa_plus` entry can be a list, which makes the funding source a grid dimension. Specs without
+these sections keep their `spec_hash`. See `specs/example_frictions.yaml`.
 
 **Constraint-set keys.** `candidate_cap` is the maximum candidate weight. `asset_ranges` applies
 the SAA's per-asset ranges. `class_limits` bounds summed class weights. `band` is a per-asset band

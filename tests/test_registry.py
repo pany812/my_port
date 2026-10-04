@@ -93,3 +93,52 @@ def test_empty_reads(reg):
     assert list(reg.cells("nope").columns)[:2] == ["cell_id", "experiment_id"]
     with pytest.raises(KeyError):
         reg.experiment("nope")
+
+
+def _old_style_registry(tmp_path):
+    """A registry as written before P2-M2: oos_returns without cost / net / liquidity columns."""
+    from sqlalchemy import text
+
+    url = f"sqlite:///{tmp_path / 'old.db'}"
+    reg = Registry(url)
+    reg.write_experiment(_experiment(), [])
+    with reg.engine.begin() as conn:
+        for col in ("cost", "portfolio_return_net", "liquidity_adjusted"):
+            conn.execute(text(f"ALTER TABLE oos_returns DROP COLUMN {col}"))
+        conn.execute(text("INSERT INTO oos_returns (experiment_id, config_id, data_variant, date, "
+                          "portfolio_return, turnover) VALUES ('exp1', 'c', 'full', '2020-01-31', "
+                          "0.012, 0.0)"))  # fmt: skip
+    return url
+
+
+def test_schema_drift_fails_fast_with_instructions(tmp_path):
+    from workbench.registry.store import RegistrySchemaError
+
+    url = _old_style_registry(tmp_path)
+    with pytest.raises(RegistrySchemaError, match="wb migrate") as e:
+        Registry(url)
+    assert "oos_returns: cost, portfolio_return_net, liquidity_adjusted" in str(e.value)
+
+
+def test_migrate_adds_columns_and_backfills_exactly(tmp_path):
+    url = _old_style_registry(tmp_path)
+    reg = Registry(url, check=False)
+    actions = reg.migrate()
+    assert len(actions) == 3 and reg.schema_drift() == {}
+    oos = Registry(url).oos_returns("exp1")  # opens cleanly now
+    row = oos.iloc[0]
+    assert row.cost == 0.0 and row.portfolio_return_net == row.portfolio_return == 0.012
+    assert not row.liquidity_adjusted
+    assert Registry(url, check=False).migrate() == []  # idempotent
+
+
+def test_cli_migrate_and_error(tmp_path, capsys):
+    from workbench.cli import main
+
+    url = _old_style_registry(tmp_path)
+    assert main(["report", "exp1", "--registry", url]) == 2
+    assert "wb migrate" in capsys.readouterr().err
+    assert main(["migrate", "--registry", url]) == 0
+    assert "oos_returns.cost added, backfilled = 0.0" in capsys.readouterr().out
+    assert main(["migrate", "--registry", url]) == 0
+    assert "up to date" in capsys.readouterr().out

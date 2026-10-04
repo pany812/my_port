@@ -65,6 +65,12 @@ tests/          pytest, synthetic fixtures only
 - Use `logging`, never `print`. Riskfolio-Lib prints on infeasibility: wrap every solve in
   `contextlib.redirect_stdout` and store the captured text in `message`.
 - Docstrings state units and frequency for every numeric input and output.
+- Frictions (P2-M2) live in the walk-forward engine only; allocators do not see costs (no
+  `current_weights` in `FitContext`). Without `costs`/`liquidity`/threshold the path must stay
+  byte-identical to Phase 1 (golden test). Cells store the allocator's fitted weights; executed
+  weights after liquidity/threshold rules are on the path (`RebalanceFit.executed`).
+- Registry changes are additive only: a new column needs an entry in `registry.store.BACKFILL`
+  with a value that is exact for older rows, so `wb migrate` can upgrade existing databases.
 - Evidence (P2-M1, `evaluation/inference.py`, `evaluation/evidence.py`) is disclosure, never a
   gate, and never changes a cell's status. Sharpe ratios are on returns in excess of the SAA's
   cash asset (or the policy rf): raw-return Sharpe inflates cash-heavy portfolios. Spanning

@@ -31,6 +31,15 @@ def window_at(returns: pd.DataFrame, as_of: pd.Timestamp, window: WindowSpec) ->
     return past.iloc[-window.periods :] if window.kind == "rolling" else past
 
 
+def period_ends(index: pd.DatetimeIndex, every: str) -> set[pd.Timestamp]:
+    """Dates in ``index`` that are the last observation of their ``every`` period (M, Q, A)."""
+    if every not in _PERIOD_ALIAS:
+        raise ValueError(f"period must be one of {sorted(_PERIOD_ALIAS)}, got {every!r}")
+    periods = index.to_period(_PERIOD_ALIAS[every])
+    last_in_period = pd.Series(index, index=index).groupby(periods).transform("max")
+    return set(last_in_period[last_in_period.index == last_in_period.to_numpy()].index)
+
+
 def rebalance_dates(
     index: pd.DatetimeIndex,
     window: WindowSpec,
@@ -52,10 +61,8 @@ def rebalance_dates(
     if len(index) < need + 1:
         return []
     candidates = index[need - 1 : -1]
-    periods = index.to_period(_PERIOD_ALIAS[every])
-    last_in_period = pd.Series(index, index=index).groupby(periods).transform("max")
-    period_ends = set(last_in_period[last_in_period.index == last_in_period.to_numpy()].index)
-    dates = [d for d in candidates if d in period_ends]
+    ends = period_ends(index, every)
+    dates = [d for d in candidates if d in ends]
     if start is not None:
         dates = [d for d in dates if d >= pd.Timestamp(start)]
     return dates

@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 
 import pandas as pd
 
-from workbench.allocators._solve import guarded_fit
+from workbench.allocators._solve import Infeasible, guarded_fit
 from workbench.allocators.base import AllocationResult, FitContext
 
 
@@ -29,9 +29,12 @@ class StaticSAA:
 
 @dataclass(frozen=True)
 class SAAPlus:
-    """SAA plus a candidate weight ``x`` (decimal), funded from the other assets.
+    """SAA plus a candidate weight ``x`` (decimal), funded from a named source.
 
-    funding="pro_rata": w = (1 - x) * SAA + x * e_candidate.
+    funding="pro_rata":     w = (1 - x) * SAA + x * e_candidate (all other assets pro rata).
+    funding="asset:<id>":   x comes out of one asset.
+    funding="class:<name>": x comes out of one asset class, pro rata within it.
+    A source holding less than x makes the cell infeasible ("funding source exhausted").
     """
 
     x: float
@@ -41,15 +44,41 @@ class SAAPlus:
     def __post_init__(self) -> None:
         if not 0.0 <= self.x <= 1.0:
             raise ValueError(f"x must be in [0, 1], got {self.x}")
-        if self.funding != "pro_rata":
-            raise ValueError(f"funding {self.funding!r} not supported in Phase 1 (pro_rata only)")
+        kind, _, name = self.funding.partition(":")
+        if not (self.funding == "pro_rata" or (kind in ("asset", "class") and name)):
+            raise ValueError(
+                f"funding must be 'pro_rata', 'asset:<id>' or 'class:<name>', got {self.funding!r}"
+            )
 
     def params(self) -> dict:
         return asdict(self)
 
     def fit(self, returns: pd.DataFrame, ctx: FitContext) -> AllocationResult:
         def impl(r, c, d):
-            w = (1.0 - self.x) * c.saa.reindex(r.columns)
+            if self.funding == "pro_rata":
+                w = (1.0 - self.x) * c.saa.reindex(r.columns)
+                w[c.candidate] += self.x
+                return w
+            w = c.saa.reindex(r.columns).astype(float).copy()
+            kind, _, name = self.funding.partition(":")
+            if kind == "asset":
+                if name not in w.index or name == c.candidate:
+                    raise ValueError(f"funding asset {name!r} is not a building block")
+                source = [name]
+            else:
+                classes = c.policy.asset_class
+                if classes is None:
+                    raise ValueError("class funding needs asset classes in the policy")
+                source = [a for a in w.index if a != c.candidate and classes.get(a) == name]
+                if not source:
+                    raise ValueError(f"funding class {name!r} has no building blocks")
+            available = float(w[source].sum())
+            if available < self.x - 1e-12:
+                raise Infeasible(
+                    f"funding source exhausted: {self.funding} holds {available:.4%} "
+                    f"< x {self.x:.4%}"
+                )
+            w[source] -= self.x * w[source] / available
             w[c.candidate] += self.x
             return w
 

@@ -140,7 +140,15 @@ def _provenance(exp, spec: ExperimentSpec) -> list[str]:
             ("currency / hedging", f"{d.base_currency} / {d.hedging}"),
             ("SAA version", exp["saa_version"]),
             ("mode", spec.backtest.mode),
-            ("window / rebalance", f"{window} / every {spec.rebalance.every}"),
+            (
+                "window / rebalance",
+                f"{window} / every {spec.rebalance.every}"
+                + (
+                    f", threshold {spec.rebalance.band:.1%}"
+                    if spec.rebalance.kind == "threshold"
+                    else ""
+                ),
+            ),  # fmt: skip
             ("risk lenses", ", ".join(spec.risk_lenses)),
         ],
         columns=["field", "value"],
@@ -250,12 +258,24 @@ def _oos_section(oos: pd.DataFrame, spec: ExperimentSpec, min_oos: int) -> list[
         cols = ["label", "constraint_set", "n_failed_rebalances", "candidate_weight_median",
                 "ann_return", "ann_vol", "max_dd", "te_vs_saa", "te_limit", "te_breach",
                 "turnover_ann"]  # fmt: skip
-        fmt = {c: _P for c in ("candidate_weight_median", "ann_return", "ann_vol", "max_dd",
-                               "te_vs_saa", "te_limit", "turnover_ann")}  # fmt: skip
-        fmt["n_failed_rebalances"] = num(0)
+        if spec.costs is not None:
+            cols += ["ann_return_gross", "cost_drag_ann"]
+        if spec.liquidity is not None:
+            cols += ["n_liquidity_adjusted", "n_adjustment_breaches"]
+        if spec.rebalance.kind == "threshold":
+            cols += ["n_trades"]
+        pct_cols = ("candidate_weight_median", "ann_return", "ann_vol", "max_dd", "te_vs_saa",
+                    "te_limit", "turnover_ann", "ann_return_gross")  # fmt: skip
+        fmt = {c: _P for c in pct_cols}
+        fmt["cost_drag_ann"] = pct(2)
+        for c in ("n_failed_rebalances", "n_liquidity_adjusted", "n_adjustment_breaches",
+                  "n_trades"):  # fmt: skip
+            fmt[c] = num(0)
         lines += [md_table(t[cols], fmt), ""]
     lines += ["`te_limit` is the ex-ante limit enforced on each fitting window; `te_vs_saa` is "
-              "realised out of sample.", ""]  # fmt: skip
+              "realised out of sample. Returns are net of transaction costs when the spec sets "
+              "them; the SAA path pays costs for its own rebalancing.", ""]  # fmt: skip
+    lines += _frictions_note(spec)
     return lines
 
 
@@ -332,6 +352,22 @@ def _evidence_section(registry: Registry, experiment_id: str, min_oos: int) -> l
 
 
 NUMERIC_EVIDENCE = {"sr_ann", "sr_saa_ann", "diff_ann", "p", "p_bh", "ir_ann", "dsr"}
+
+
+def _frictions_note(spec: ExperimentSpec) -> list[str]:
+    parts = []
+    if spec.costs is not None:
+        per = ", ".join(f"{k} {v:g}" for k, v in (spec.costs.per_asset or {}).items())
+        parts.append(f"costs {spec.costs.default_bps:g} bps one-way" + (f" ({per})" if per else ""))
+    if spec.liquidity is not None:
+        lq = spec.liquidity
+        parts.append(f"candidate deals {lq.dealing}, notice {lq.notice_periods} dealing date(s), "
+                     f"gate {'none' if lq.gate is None else f'{lq.gate:.0%}'}")  # fmt: skip
+    if spec.rebalance.kind == "threshold":
+        parts.append(f"threshold rebalancing at {spec.rebalance.band:.1%} drift")
+    if spec.funding != "pro_rata":
+        parts.append(f"default funding {spec.funding}")
+    return [f"Frictions: {'; '.join(parts)}.", ""] if parts else []
 
 
 def _expost_section(expost: pd.DataFrame) -> list[str]:

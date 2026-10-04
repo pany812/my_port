@@ -2,7 +2,8 @@
 
 Schema per docs/PHASE1.md plus four approved ``cells`` columns (``config_id``, ``cell_index``,
 ``data_variant``, ``diagnostics_json``), the approved ``oos_returns`` table (M5) and the
-approved ``evidence`` table (P2-M1).
+approved ``evidence`` table (P2-M1); ``oos_returns`` gained ``cost``, ``portfolio_return_net``
+and ``liquidity_adjusted`` (P2-M2).
 Ask before changing it.
 """
 
@@ -10,7 +11,7 @@ from __future__ import annotations
 
 import datetime as dt
 
-from sqlalchemy import Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -86,8 +87,11 @@ class OosReturn(Base):
     config_id: Mapped[str] = mapped_column(String(16), primary_key=True)
     data_variant: Mapped[str] = mapped_column(String(20), primary_key=True)
     date: Mapped[dt.date] = mapped_column(Date, primary_key=True)
-    portfolio_return: Mapped[float] = mapped_column(Float)
+    portfolio_return: Mapped[float] = mapped_column(Float)  # gross
     turnover: Mapped[float] = mapped_column(Float, default=0.0)
+    cost: Mapped[float] = mapped_column(Float, default=0.0)  # P2-M2
+    portfolio_return_net: Mapped[float] = mapped_column(Float)  # P2-M2: gross - cost
+    liquidity_adjusted: Mapped[bool] = mapped_column(Boolean, default=False)  # P2-M2
 
 
 class Evidence(Base):

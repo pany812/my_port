@@ -1,1 +1,1 @@
-config_id,data_variant,date,portfolio_return,turnover
+config_id,data_variant,date,portfolio_return,turnover,cost,portfolio_return_net,liquidity_adjusted

@@ -17,7 +17,7 @@ from pathlib import Path
 from workbench.evaluation.report import build_report, headline_text
 from workbench.grid.runner import run_experiment
 from workbench.grid.spec import SpecError, load_spec
-from workbench.registry.store import Registry
+from workbench.registry.store import Registry, RegistrySchemaError
 
 DEFAULT_REGISTRY = "sqlite:///out/registry.db"
 log = logging.getLogger("workbench")
@@ -30,11 +30,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     try:
+        if args.command == "migrate":
+            return _migrate(args)
         registry = _open_registry(args.registry)
         if args.command == "run":
             return _run(args, registry)
         return _report(args, registry)
-    except (SpecError, KeyError, FileNotFoundError, NotImplementedError) as e:
+    except (SpecError, KeyError, FileNotFoundError, NotImplementedError,
+            RegistrySchemaError) as e:  # fmt: skip
         sys.stderr.write(f"wb: error: {e}\n")
         return 2
 
@@ -61,6 +64,13 @@ def _report(args, registry: Registry) -> int:
     return 0
 
 
+def _migrate(args) -> int:
+    reg = _open_registry(args.registry, check=False)
+    actions = reg.migrate()
+    _emit("".join(f"{a}\n" for a in actions) or "registry schema is up to date\n")
+    return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--registry", default=os.environ.get("WB_REGISTRY", DEFAULT_REGISTRY),
@@ -76,13 +86,16 @@ def _parser() -> argparse.ArgumentParser:
                      help="when the same spec + data vintage is already registered")  # fmt: skip
     rep = sub.add_parser("report", parents=[common], help="rebuild a report from the registry")
     rep.add_argument("experiment", help="experiment name (latest run) or experiment_id")
+    sub.add_parser(
+        "migrate", parents=[common], help="add columns from newer versions to an existing registry"
+    )
     return p
 
 
-def _open_registry(url: str) -> Registry:
+def _open_registry(url: str, check: bool = True) -> Registry:
     if url.startswith("sqlite:///") and url != "sqlite:///:memory:":
         Path(url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
-    return Registry(url)
+    return Registry(url, check=check)
 
 
 def _out_dir(root: str, name: str) -> Path:

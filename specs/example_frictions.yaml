@@ -1,0 +1,43 @@
+# The example grid with implementation frictions (P2-M2): transaction costs, the candidate's
+# dealing terms, threshold rebalancing and named funding. Run: wb run specs/example_frictions.yaml
+experiment: synthetic_trend_frictions_v1
+seed: 42
+data:
+  source: synthetic            # later: postgres
+  frequency: M
+  start: 2006-01
+  end: 2026-09
+  base_currency: SEK
+  hedging: "synthetic placeholder: fixed income SEK-hedged, equity and real assets unhedged"
+  candidate: CAND
+  synthetic:                   # candidate and market shape (annual units, decimals)
+    mu_annual: 0.05
+    vol_annual: 0.10
+    corr_to_equity: -0.1
+    skew: 0.3
+    live_start: 2016-01        # earlier observations are flagged as backfilled
+    tail_df: 6                 # fat-tailed building blocks
+saa:
+  version: example
+funding: pro_rata
+rf_annual: 0.0
+window: {kind: rolling, periods: 120}
+rebalance: {kind: threshold, every: M, band: 0.01}   # trade only beyond 1% drift
+costs:                         # one-way, bps of traded weight
+  default_bps: 5
+  per_asset: {EM_EQ: 20, HY: 25, REAL_EST: 40, CAND: 0}
+liquidity: {dealing: Q, notice_periods: 1, gate: 0.25}   # candidate dealing terms
+backtest: {mode: walk_forward}   # in_sample: a single fit at the end of the data
+grid:
+  estimators:
+    - {method_mu: hist, method_cov: ledoit}
+    - {method_mu: JS, method_cov: gerber1}
+  allocators:
+    - {type: static_saa}
+    - {type: saa_plus, x: [0.02, 0.05, 0.10], funding: [pro_rata, class:fixed_income]}
+    - {type: riskfolio_mean_risk, rm: [MV, CVaR, CDaR], obj: [Sharpe, MinRisk]}
+    - {type: riskfolio_hc, model: [HRP, HERC], codependence: [pearson, spearman], linkage: [ward]}
+  constraint_sets:
+    - {name: bands_5pct, band: 0.05, candidate_cap: 0.10}
+    - {name: te_2pct, te_annual: 0.02, candidate_cap: 0.10}
+risk_lenses: [MV, CVaR, CDaR]

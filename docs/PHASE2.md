@@ -58,7 +58,8 @@ test) when the SAA has one; HC3-F as the robust line; path tests skipped below 2
   configurations, the DSR worked example from the paper.
 - Report: an "Evidence net of search" section.
 
-**P2-M2 Costs, funding and liquidity.** This is the walk-forward engine, so a plan comes first.
+**P2-M2 Costs, funding and liquidity.** *Built 2026-10-04* (own engine, costs ex post only,
+liquidity by freeze-and-rescale; plus `wb migrate` for additive registry upgrades).
 - Spec `costs:` gives one-way transaction costs per building block in bps. Paths are stored
   gross and net.
 - `funding:` gains named sources (asset or class) beyond `pro_rata` for `saa_plus` and the
