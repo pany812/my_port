@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +12,7 @@ import pandas as pd
 
 from workbench.evaluation.agreement import agreement_summary, paired_cells
 from workbench.evaluation.corridor import FAILED_STATUSES, corridor
-from workbench.evaluation.expost import expost_table
+from workbench.evaluation.expost import cell_label, expost_table
 from workbench.evaluation.markdown import md_table, num, pct
 from workbench.evaluation.oos import oos_table
 from workbench.grid.spec import ExperimentSpec, parse_spec
@@ -115,6 +116,7 @@ def _summary(registry, exp, spec: ExperimentSpec, corr, expost, oos, min_oos) ->
     lines += _failures(cells)
     lines += _agreement_section(registry, exp["experiment_id"])
     lines += _oos_section(oos, spec, min_oos)
+    lines += _evidence_section(registry, exp["experiment_id"], min_oos)
     lines += _expost_section(expost)
     lines += _live_only_note(variants, corr)
     lines += _definitions(spec)
@@ -255,6 +257,81 @@ def _oos_section(oos: pd.DataFrame, spec: ExperimentSpec, min_oos: int) -> list[
     lines += ["`te_limit` is the ex-ante limit enforced on each fitting window; `te_vs_saa` is "
               "realised out of sample.", ""]  # fmt: skip
     return lines
+
+
+def _evidence_section(registry: Registry, experiment_id: str, min_oos: int) -> list[str]:
+    ev = registry.evidence(experiment_id)
+    lines = ["## Evidence net of search", "",
+             "Disclosures, not gates. Sharpe test: Ledoit–Wolf studentised block bootstrap vs the "
+             "SAA path on returns in excess of the riskless asset (or the policy rf), with p raw "
+             "and Benjamini–Hochberg across configurations. DSR: deflated Sharpe "
+             "of the information ratio vs the SAA, deflated for every configuration tried. PBO: "
+             "share of CSCV splits where the in-sample best configuration ranks below the "
+             "out-of-sample median (≈0.5 for pure noise).", ""]  # fmt: skip
+    if ev.empty:
+        return lines + ["_No evidence stored for this experiment._", ""]
+    extra = ev["extra_json"].map(json.loads)
+    ev = ev.assign(extra=extra)
+    cells = registry.cells(experiment_id)
+    meta = cells.groupby("config_id").first()
+    for variant, g in ev.groupby("data_variant", sort=True):
+        lines += [f"### {variant}", ""]
+        sd = g[g["test"] == "sharpe_diff"]
+        if not sd.empty:
+            n_obs = int(sd["extra"].iloc[0]["n_obs"])
+            pbo = g[g["test"] == "pbo"]
+            dsr = g[g["test"] == "dsr"].set_index("subject")
+            n_trials = int(dsr["extra"].iloc[0]["n_trials"]) if not dsr.empty else len(sd)
+            sr_star = dsr["extra"].iloc[0].get("sr_star_ann") if not dsr.empty else None
+            pbo_val = None if pbo.empty else pbo["statistic"].iloc[0]
+            pbo_txt = "–" if pbo_val is None or pd.isna(pbo_val) else f"{pbo_val:.2f}"
+            star_txt = "–" if sr_star is None else f"{sr_star:.2f}"
+            lines += [f"Trials N = {n_trials}, OOS periods T = {n_obs}, PBO = {pbo_txt}, "
+                      f"expected max IR under the null = {star_txt} (annualised).", ""]  # fmt: skip
+            if n_obs < min_oos:
+                lines += [f"> ⚠ **Sample too short** ({n_obs} < {min_oos} periods): tests have "
+                          "almost no power here.", ""]  # fmt: skip
+            rows = []
+            for r in sd.itertuples():
+                m = meta.loc[r.subject] if r.subject in meta.index else None
+                d = dsr.loc[r.subject] if r.subject in dsr.index else None
+                rows.append({
+                    "label": "?" if m is None else cell_label(m.allocator, m.params_json,
+                                                              m.estimator_json),
+                    "constraint_set": "" if m is None else m.constraint_set,
+                    "sr_ann": r.extra.get("sr_ann"), "sr_saa_ann": r.extra.get("sr_saa_ann"),
+                    "diff_ann": r.extra.get("diff_ann"), "p": r.p_value,
+                    "p_bh": r.extra.get("p_bh"),
+                    "ir_ann": None if d is None else d.extra.get("ir_ann"),
+                    "dsr": None if d is None else d.statistic,
+                    "note": r.extra.get("note") or ("" if d is None else d.extra.get("note")),
+                    "_order": 0 if m is None else int(m.cell_index),
+                })  # fmt: skip
+            t = pd.DataFrame(rows).sort_values("_order").drop(columns="_order")
+            t = t.apply(lambda c: pd.to_numeric(c) if c.name in NUMERIC_EVIDENCE else c)
+            fmt = {c: num(2) for c in ("sr_ann", "sr_saa_ann", "diff_ann", "ir_ann")}
+            fmt |= {"p": num(3), "p_bh": num(3), "dsr": num(2)}
+            lines += [md_table(t, fmt), ""]
+        sp = g[g["subject"] == "candidate"]
+        if not sp.empty:
+            x0 = sp["extra"].iloc[0]
+            how = (f"excess returns over the riskless asset {x0['riskless']}" if x0.get("riskless")
+                   else "Huberman–Kandel / Kan–Zhou on raw returns")  # fmt: skip
+            st = pd.DataFrame({
+                "test": sp["test"].to_numpy(), "statistic": sp["statistic"].to_numpy(),
+                "p_value": sp["p_value"].to_numpy(),
+                "alpha_ann": [x.get("alpha_ann") for x in sp["extra"]],
+                "n_obs": [x.get("n_obs") for x in sp["extra"]],
+            })  # fmt: skip
+            st["alpha_ann"] = pd.to_numeric(st["alpha_ann"])
+            lines += [f"Spanning (candidate vs the SAA building blocks, {how}, full history of "
+                      "this variant; low power on short histories):", "",
+                      md_table(st, {"statistic": num(3), "p_value": num(3),
+                                    "alpha_ann": pct(2)}), ""]  # fmt: skip
+    return lines
+
+
+NUMERIC_EVIDENCE = {"sr_ann", "sr_saa_ann", "diff_ann", "p", "p_bh", "ir_ann", "dsr"}
 
 
 def _expost_section(expost: pd.DataFrame) -> list[str]:

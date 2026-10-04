@@ -65,6 +65,13 @@ tests/          pytest, synthetic fixtures only
 - Use `logging`, never `print`. Riskfolio-Lib prints on infeasibility: wrap every solve in
   `contextlib.redirect_stdout` and store the captured text in `message`.
 - Docstrings state units and frequency for every numeric input and output.
+- Evidence (P2-M1, `evaluation/inference.py`, `evaluation/evidence.py`) is disclosure, never a
+  gate, and never changes a cell's status. Sharpe ratios are on returns in excess of the SAA's
+  cash asset (or the policy rf): raw-return Sharpe inflates cash-heavy portfolios. Spanning
+  with a cash asset runs in excess returns and tests alpha only (a near-constant benchmark makes
+  the HK/KZ-F2 legs degenerate). The robust spanning line is HC3 with F scaling (Newey-West
+  chi2 over-rejects at T~130). Path tests need >= 24 OOS periods. Every statistic has a
+  known-answer test in `tests/test_inference.py`; extend it before changing a formula.
 
 ## Riskfolio-Lib 7.4.0: verified behaviour and traps
 

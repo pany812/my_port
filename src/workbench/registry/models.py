@@ -1,7 +1,8 @@
 """SQLAlchemy models. SQLite in tests, PostgreSQL in production.
 
 Schema per docs/PHASE1.md plus four approved ``cells`` columns (``config_id``, ``cell_index``,
-``data_variant``, ``diagnostics_json``) and the approved ``oos_returns`` table (M5).
+``data_variant``, ``diagnostics_json``), the approved ``oos_returns`` table (M5) and the
+approved ``evidence`` table (P2-M1).
 Ask before changing it.
 """
 
@@ -87,3 +88,19 @@ class OosReturn(Base):
     date: Mapped[dt.date] = mapped_column(Date, primary_key=True)
     portfolio_return: Mapped[float] = mapped_column(Float)
     turnover: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class Evidence(Base):
+    """Statistical evidence per data variant: per configuration, for the grid or the candidate."""
+
+    __tablename__ = "evidence"
+
+    experiment_id: Mapped[str] = mapped_column(
+        ForeignKey("experiments.experiment_id", ondelete="CASCADE"), primary_key=True
+    )
+    data_variant: Mapped[str] = mapped_column(String(20), primary_key=True)
+    subject: Mapped[str] = mapped_column(String(32), primary_key=True)  # config_id|grid|candidate
+    test: Mapped[str] = mapped_column(String(40), primary_key=True)
+    statistic: Mapped[float | None] = mapped_column(Float, nullable=True)
+    p_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    extra_json: Mapped[str] = mapped_column(Text, default="{}")

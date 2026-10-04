@@ -26,6 +26,7 @@ from workbench.backtest.walkforward import PathResult, WalkForwardEngine
 from workbench.data.align import align_history, data_vintage
 from workbench.data.base import MarketData
 from workbench.data.loaders import load_market
+from workbench.evaluation.evidence import path_evidence, spanning_evidence
 from workbench.evaluation.metrics import cell_metrics
 from workbench.grid.expand import CellConfig, expand
 from workbench.grid.spec import ExperimentSpec, WindowSpec
@@ -112,15 +113,24 @@ def run_experiment(
 
     records: list[CellRecord] = []
     oos_rows: list[dict] = []
+    evidence_rows: list[dict] = []
     t0 = time.perf_counter()
+    freq = spec.data.frequency
     for variant, vdata in data_variants(data).items():
         returns = vdata.returns[saa.assets]
         if spec.backtest.mode == "in_sample":
             records += _in_sample_variant(ctx, configs, variant, returns)
+            ev = []
         else:
-            recs, rows = _walk_forward_variant(ctx, configs, variant, returns)
+            recs, rows, paths, saa_path = _walk_forward_variant(ctx, configs, variant, returns)
             records += recs
             oos_rows += rows
+            rl = _riskless(saa)
+            rf = returns[rl] if rl is not None else ctx.policies[spec.constraint_sets[0].name].rf
+            ev = (path_evidence(paths, saa_path, freq, spec.seed, riskless=rf)
+                  if saa_path is not None else [])  # fmt: skip
+        ev += spanning_evidence(returns, saa.candidate, freq, _riskless(saa))
+        evidence_rows += [{"data_variant": variant, **r} for r in ev]
         log.info("variant %s done (%.1fs)", variant, time.perf_counter() - t0)
 
     registry.write_experiment(
@@ -138,6 +148,7 @@ def run_experiment(
         },
         records,
         oos_rows,
+        evidence_rows,
     )
     grid = [r for r in records if r.allocator != REFERENCE_ALLOCATOR]
     counts = pd.Series([r.status for r in grid]).value_counts().to_dict()
@@ -176,7 +187,8 @@ def _in_sample_variant(
 
 def _walk_forward_variant(
     ctx: _Context, configs: list[CellConfig], variant: str, returns: pd.DataFrame
-) -> tuple[list[CellRecord], list[dict]]:
+) -> tuple[list[CellRecord], list[dict], dict[str, pd.Series], pd.Series | None]:
+    """Cells, OOS path rows, OOS paths by config_id and the SAA path (None if no schedule)."""
     spec = ctx.spec
     schedule = rebalance_dates(returns.index, spec.window, spec.rebalance.every,
                                spec.data.frequency, spec.backtest.start)  # fmt: skip
@@ -184,11 +196,12 @@ def _walk_forward_variant(
         msg = (f"insufficient history: no rebalance date with a full window "
                f"({len(returns)} periods)")  # fmt: skip
         end = returns.index[-1]
-        return [_failed_cell(ctx, cfg, variant, end, msg) for cfg in configs], []
+        return [_failed_cell(ctx, cfg, variant, end, msg) for cfg in configs], [], {}, None
 
     engine = WalkForwardEngine(spec.window)
     records: list[CellRecord] = []
     rows: list[dict] = []
+    paths: dict[str, pd.Series] = {}
     for cfg in configs:
         try:
             allocator = build(cfg.allocator, cfg.params, cfg.estimator)
@@ -200,12 +213,13 @@ def _walk_forward_variant(
         for f in path.fits:
             records.append(_cell_from_result(ctx, cfg, variant, f.as_of, f.window, f.result))
         rows += _path_rows(cfg.config_id, variant, path)
+        paths[cfg.config_id] = path.returns
 
     ref_path = engine.run(returns, schedule, _saa_fit_fn(ctx), fallback=ctx.saa.weights)
     for f in ref_path.fits:
         records.append(_reference_cell(ctx, variant, f.window))
     rows += _path_rows(REFERENCE_ALLOCATOR, variant, ref_path)
-    return records, rows
+    return records, rows, paths, ref_path.returns
 
 
 def _fit_fn(ctx: _Context, cfg: CellConfig, allocator):
@@ -313,3 +327,9 @@ def _reference_cell(ctx: _Context, variant: str, window: pd.DataFrame) -> CellRe
     )
     _add_metrics(rec, window, ctx.saa, ctx.spec)
     return rec
+
+
+def _riskless(saa: SAA) -> str | None:
+    """The SAA's single cash-class asset (riskless proxy for spanning tests), else None."""
+    cash = [a for a in saa.assets if saa.asset_class[a] == "cash" and a != saa.candidate]
+    return cash[0] if len(cash) == 1 else None

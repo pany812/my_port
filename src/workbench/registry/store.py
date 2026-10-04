@@ -12,7 +12,7 @@ from sqlalchemy import create_engine, delete, event, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
-from workbench.registry.models import Base, Cell, Experiment, Metric, OosReturn, Weight
+from workbench.registry.models import Base, Cell, Evidence, Experiment, Metric, OosReturn, Weight
 
 # Pseudo-allocator for the SAA benchmark row written once per (variant, window end). It is a
 # cells row so its weights and metrics can be stored, but it is NOT a grid cell: every read
@@ -66,6 +66,7 @@ class Registry:
             s.execute(delete(Metric).where(Metric.cell_id.in_(cell_ids)))
             s.execute(delete(Cell).where(Cell.experiment_id == experiment_id))
             s.execute(delete(OosReturn).where(OosReturn.experiment_id == experiment_id))
+            s.execute(delete(Evidence).where(Evidence.experiment_id == experiment_id))
             s.execute(delete(Experiment).where(Experiment.experiment_id == experiment_id))
 
     def write_experiment(
@@ -73,10 +74,12 @@ class Registry:
         experiment: dict,
         cells: Iterable[CellRecord],
         oos_rows: Iterable[dict] = (),
+        evidence_rows: Iterable[dict] = (),
     ) -> None:
         """Insert the experiment, its cells, weights, metrics and OOS paths atomically.
 
         oos_rows: dicts with config_id, data_variant, date, portfolio_return, turnover.
+        evidence_rows: dicts with data_variant, subject, test, statistic, p_value, extra_json.
         """
         cells = list(cells)
         cell_rows = [
@@ -119,6 +122,9 @@ class Registry:
             oos = [{"experiment_id": experiment["experiment_id"], **r} for r in oos_rows]
             if oos:
                 s.execute(insert(OosReturn), oos)
+            ev = [{"experiment_id": experiment["experiment_id"], **r} for r in evidence_rows]
+            if ev:
+                s.execute(insert(Evidence), ev)
 
     # --- reads -----------------------------------------------------------------------
 
@@ -194,6 +200,12 @@ class Registry:
         if not include_reference:
             q = q.where(OosReturn.config_id != REFERENCE_ALLOCATOR)
         q = q.order_by(OosReturn.data_variant, OosReturn.config_id, OosReturn.date)
+        return self._frame(q).drop(columns="experiment_id")
+
+    def evidence(self, experiment_id: str) -> pd.DataFrame:
+        """Long format: data_variant, subject, test, statistic, p_value, extra_json."""
+        q = select(Evidence).where(Evidence.experiment_id == experiment_id)
+        q = q.order_by(Evidence.data_variant, Evidence.subject, Evidence.test)
         return self._frame(q).drop(columns="experiment_id")
 
     def _frame(self, query) -> pd.DataFrame:

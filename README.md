@@ -29,7 +29,7 @@ uv run wb report synthetic_trend_v1       # rebuild the report from the registry
 | `corridor.csv` | corridor per data variant × rebalance date × measure (counts by status, P10–P90, share below 0.25%) |
 | `oos.csv` | walk-forward out-of-sample statistics per configuration vs the SAA path |
 | `expost.csv` | in-sample statistics per cell and rebalance date (diagnostic only) |
-| `summary.md` | provenance, cell counts, corridor (latest and through time), group-by views, failures, OOS vs SAA, live-only variant, definitions |
+| `summary.md` | provenance, cell counts, corridor (latest and through time), group-by views, failures, OOS vs SAA, **evidence net of search** (Sharpe test vs SAA with BH-adjusted p, deflated Sharpe, PBO, spanning), live-only variant, definitions |
 
 Re-running an identical spec on identical data is skipped (`--if-exists replace` to redo):
 `experiment_id` is a hash of the spec, the data vintage and the Riskfolio-Lib version.
@@ -174,7 +174,8 @@ src/workbench/
   allocators/     protocol, guarded_fit, naive, Riskfolio-Lib and skfolio allocators, factory
   grid/           spec parsing, deterministic expansion, runner
   backtest/       rebalance schedule, walk-forward engine
-  evaluation/     stats, risk shares, corridor, ex-post, out-of-sample, library agreement, report
+  evaluation/     stats, risk shares, corridor, ex-post, out-of-sample, inference + evidence,
+                  library agreement, report
   registry/       SQLAlchemy models and store
   cli.py          wb run / wb report
 specs/            experiment specs

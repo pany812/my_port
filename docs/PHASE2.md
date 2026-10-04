@@ -42,8 +42,10 @@ stress and to the return assumptions, and written up as a decision an IC can gov
 Ordered by evidence value per unit of work. Milestones marked **data-gated** wait for answers
 to the open questions; they can be pulled forward as soon as data arrives.
 
-**P2-M1 Statistical evidence.** New `evaluation/inference.py`, our own code on numpy/scipy, run
-on the stored paths (no refitting).
+**P2-M1 Statistical evidence.** *Built 2026-10-04.* New `evaluation/inference.py`, our own
+code on numpy/scipy, run on the stored paths (no refitting). Decisions made during the build:
+Sharpe on returns in excess of the cash asset; spanning in excess returns over cash (alpha
+test) when the SAA has one; HC3-F as the robust line; path tests skipped below 24 OOS periods.
 - Sharpe difference vs the SAA path: Ledoit–Wolf (2008) studentised circular-block bootstrap,
   block length by a stated rule.
 - Deflated Sharpe ratio (Bailey & López de Prado 2014), with the number of trials equal to the

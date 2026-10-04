@@ -25,7 +25,7 @@ EXPECTED_SPEC_HASH = {
     "walk_forward": "f1d84267d2e4416d78d12ccf7e98586596913aeab0c3b4daf889b9c867ba613e",
     "in_sample": "49c7d46f2941c9a47ceedb939842597c8226c3835e31b3e20549e6ba1c2b5919",
 }
-KEYS = ("status", "weights", "oos", "corridor")
+KEYS = ("status", "weights", "oos", "corridor", "evidence")
 
 
 def _spec(mode: str):
@@ -49,6 +49,7 @@ def _snapshot(tmp_path, mode: str, name: str) -> dict:
         "weights": w.sort_values([*keys, "asset_id"]).reset_index(drop=True),
         "oos": reg.oos_returns(s.experiment_id, include_reference=True).reset_index(drop=True),
         "corridor": corridor(reg, s.experiment_id),
+        "evidence": reg.evidence(s.experiment_id).reset_index(drop=True),
     }
 
 
