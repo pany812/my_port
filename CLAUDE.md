@@ -2,8 +2,9 @@
 
 Tests whether a candidate strategy improves the strategic portfolio (SAA), and at what size,
 by running it through a grid of estimators, construction methods, risk measures and constraint
-sets, and judging it on out-of-sample evidence. Riskfolio-Lib does estimation and construction.
-Backtesting, statistics, the registry and reporting are our own code.
+sets, and judging it on out-of-sample evidence. Riskfolio-Lib does estimation and construction,
+with skfolio as a second backend (same configurations, compared in the library-agreement
+section). Backtesting, statistics, the registry and reporting are our own code.
 
 - Concept and context map: https://claude.ai/artifact/5QJ6JZvKZ85LLdvMuBxCg7
 - Current build scope and milestones: @docs/PHASE1.md
@@ -104,6 +105,39 @@ or by running it on synthetic data (October 2026).
   drop it before setting `port.B` for factor risk-contribution constraints.
 - Riskfolio-Lib has no backtester. Its single backtesting tutorial uses vectorbt.
 
+## skfolio 1.4.11: verified behaviour and traps
+
+Pinned: `skfolio==1.4.11` (co-installs with riskfolio-lib 7.4.0; scipy 1.18.1). Adapters in
+`allocators/skfolio_*.py`, names in `allocators/_skfolio_map.py`, policy in `policy/skfolio.py`.
+Checked on synthetic data (October 2026):
+
+- Estimators are numerically identical to Riskfolio's: mu `hist` -> `EmpiricalMu`,
+  `JS` -> `ShrunkMu(method=JAMES_STEIN)` (real-valued, no complex trap); cov `hist`,
+  `ledoit` -> `LedoitWolf`, `gerber1` -> `GerberCovariance`. Unmapped names fail loudly.
+- CVaR/CDaR MinRisk and Sharpe match Riskfolio to ~1e-8. MV: use `STANDARD_DEVIATION` for
+  `MAXIMIZE_RATIO` (Riskfolio maximises mean/std), `VARIANCE` otherwise; cash-dominated
+  min-variance shows a ~5e-5 relative volatility gap (solver tolerance, flat region).
+- Utility: Riskfolio `l` == skfolio `risk_aversion` (checked on interior solutions).
+- HRP is identical. HERC/NCO are identical (NCO ~5e-4) only when the cluster count matches:
+  Riskfolio picks k by the two-difference gap statistic, skfolio by its own rule
+  (`HierarchicalClustering.max_clusters=None`). `SkfolioHC.max_clusters` forces it.
+- `max_turnover` + `previous_weights` is an element-wise band (same as `allowTO`).
+  `max_tracking_error` with `y = R @ SAA` is the same non-demeaned RMS/(T-1) TE as Riskfolio.
+  Class limits: `groups` + string `linear_constraints` (class names must be identifiers).
+- Failure: raises `cvxpy.error.SolverError` for both infeasible and numerically failed problems
+  and keeps no `problem_`. We classify with `policy.skfolio.linear_infeasibility` (SAA is a
+  feasible point when it meets the linear constraints; else an LP decides). No stdout output.
+- `Portfolio.contribution` is not Euler-additive (variance sums to 2x, CDaR ~1.5% off): risk
+  shares stay on Riskfolio-Lib/our code.
+- NCO takes no composite weight bounds here; the post-check catches breaches.
+- **Bounded HRP/HERC returns NaN weights** when lower bounds bind: `_hrp.py:486` divides by
+  `weights[cluster[0]]`, which is 0 once an asset is pushed to zero (0/0). Upper bounds alone
+  are fine. Riskfolio solves the same bounds. `SkfolioHC` maps non-finite weights to
+  `solver_error`. Unconstrained HRP is identical to Riskfolio for every estimator; with binding
+  bounds the two libraries' bound-handling in the bisection differs (~0.7% on the example).
+- skfolio HERC can overshoot `max_weights` by ~1e-6 (seen once in 2,064 cells: CASH 0.100001
+  vs 0.10). Our post-check tolerance stays at 1e-6, so such a cell is recorded `infeasible`.
+
 ## Testing
 
 - `pytest -q` must pass before every commit. Tests use `tests/fixtures/synthetic.py` only:
@@ -122,17 +156,6 @@ or by running it on synthetic data (October 2026).
 - Data: Bloomberg (blpapi) → PostgreSQL. TODO(Patrik): schema and tables for building-block and
   candidate returns. Loaders read from PostgreSQL only; no live Bloomberg calls in this package.
 - UI: Streamlit over the registry. Phase 2, not now.
-- skfolio (decided 2026-10-04): add as a **second backend** after Phase 1 (`skfolio_mean_risk`,
-  `skfolio_hc` behind the same `Allocator` protocol; grid gains a "library" dimension). Not yet a
-  dependency. Verified on synthetic data with skfolio 1.4.11 (co-installs with
-  riskfolio-lib 7.4.0; scipy moves 1.17.1 -> 1.18.1, re-verify golden files):
-  `max_turnover` + `previous_weights` is an element-wise band (same as `allowTO`);
-  `max_tracking_error` with `y = R @ SAA` uses the same non-demeaned RMS/(T-1) TE as Riskfolio;
-  class limits via `groups` + `linear_constraints`; no stdout output. Traps: an infeasible problem
-  raises a generic `SolverError` (or `weights_=None` with `raise_on_failure=False`) and keeps no
-  `problem_`, so infeasible vs solver error needs our own feasibility pre-check;
-  `Portfolio.contribution` is not Euler-additive (variance sums to 2x, CDaR ~1.5% off), so keep
-  risk shares on Riskfolio-Lib/our code.
 
 ## Working style
 

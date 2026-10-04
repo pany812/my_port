@@ -6,8 +6,9 @@ constraint sets, and judges it on out-of-sample evidence. The output is an **all
 corridor**: the distribution of the candidate's capital weight and risk share across all grid
 cells, with failed cells counted, never dropped.
 
-Riskfolio-Lib 7.4.0 does estimation and construction; the backtest, statistics, registry and
-reporting are our own code. See `CLAUDE.md` for conventions and verified library behaviour and
+Riskfolio-Lib 7.4.0 does estimation and construction, with skfolio 1.4.11 as a second backend:
+the same configuration can be solved by both and compared. The backtest, statistics, registry
+and reporting are our own code. See `CLAUDE.md` for conventions and verified library behaviour and
 `docs/PHASE1.md` for scope.
 
 ## Quickstart
@@ -77,6 +78,8 @@ grid:
     - {type: inverse_vol}
     - {type: riskfolio_mean_risk, rm: [MV, CVaR, CDaR], obj: [Sharpe, MinRisk]}
     - {type: riskfolio_hc, model: [HRP, HERC], codependence: [pearson, spearman], linkage: [ward]}
+    - {type: skfolio_mean_risk, rm: [CVaR], obj: [MinRisk]}   # same parameters, second library
+    - {type: skfolio_hc, model: [HRP], max_clusters: 3}      # max_clusters: skfolio only
   constraint_sets:
     - {name: bands_5pct, band: 0.05, candidate_cap: 0.10}
     - {name: te_2pct, te_annual: 0.02, candidate_cap: 0.10}
@@ -100,6 +103,13 @@ under reordering. In walk-forward mode every rebalance date is a cell.
 **Data variants.** If the candidate has backfilled observations, every experiment also runs a
 `live_only` variant. The report always shows it and flags out-of-sample samples shorter than 36
 periods.
+
+**Two libraries.** `skfolio_mean_risk` and `skfolio_hc` take the same parameters as their
+`riskfolio_*` twins (estimator names in Riskfolio vocabulary; unmapped names are recorded as
+`exception` cells). When both libraries are in a grid, the report adds a "By library" view and a
+**library agreement** section: matched configurations compared on the candidate's weight at
+every date. HERC/NCO differ by design unless `max_clusters` is set (cluster-count selection).
+See `specs/example_two_libraries.yaml`.
 
 **Allocator parameters** are the fields of the allocator dataclass (see
 `src/workbench/allocators/`). `wb run` rejects unknown names before anything runs.
@@ -160,11 +170,11 @@ periods.
 src/workbench/
   units.py        the only annual <-> per-period conversions
   data/           MarketData, synthetic generator, loaders, alignment, data vintage
-  policy/         SAA, constraint sets -> CompiledPolicy, Riskfolio-Lib translation
-  allocators/     protocol, guarded_fit, naive + Riskfolio-Lib allocators, factory
+  policy/         SAA, constraint sets -> CompiledPolicy, Riskfolio-Lib and skfolio translation
+  allocators/     protocol, guarded_fit, naive, Riskfolio-Lib and skfolio allocators, factory
   grid/           spec parsing, deterministic expansion, runner
   backtest/       rebalance schedule, walk-forward engine
-  evaluation/     stats, risk shares, corridor, ex-post, out-of-sample, report
+  evaluation/     stats, risk shares, corridor, ex-post, out-of-sample, library agreement, report
   registry/       SQLAlchemy models and store
   cli.py          wb run / wb report
 specs/            experiment specs

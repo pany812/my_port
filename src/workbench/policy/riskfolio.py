@@ -88,12 +88,7 @@ def hc_bounds(policy: CompiledPolicy, assets: list[str]) -> tuple[pd.Series, pd.
     Built through ``rp.hrp_constraints`` with an object-dtype ``Disabled`` column; a numpy-bool
     column makes Riskfolio-Lib 7.4.0 silently ignore every row.
     """
-    lo, hi = policy.bounds(assets)
-    if policy.band is not None:
-        bench = policy.benchweights.reindex(assets)
-        lo = np.maximum(lo, bench - policy.band)
-        hi = np.minimum(hi, bench + policy.band)
-    lo, hi = lo.clip(lower=0.0), hi.clip(upper=1.0)
+    lo, hi = policy.box_bounds(assets)
     rows = []
     for a in assets:
         rows.append({"Disabled": False, "Type": "Assets", "Set": "", "Position": a,

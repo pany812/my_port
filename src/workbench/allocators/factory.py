@@ -8,6 +8,8 @@ from workbench.allocators.base import Allocator
 from workbench.allocators.naive import EqualWeight, InverseVol, SAAPlus, StaticSAA
 from workbench.allocators.riskfolio_hc import RiskfolioHC
 from workbench.allocators.riskfolio_mr import RiskfolioMeanRisk
+from workbench.allocators.skfolio_hc import SkfolioHC
+from workbench.allocators.skfolio_mr import SkfolioMeanRisk
 
 ALLOCATOR_TYPES: dict[str, type] = {
     "static_saa": StaticSAA,
@@ -16,6 +18,8 @@ ALLOCATOR_TYPES: dict[str, type] = {
     "inverse_vol": InverseVol,
     "riskfolio_mean_risk": RiskfolioMeanRisk,
     "riskfolio_hc": RiskfolioHC,
+    "skfolio_mean_risk": SkfolioMeanRisk,
+    "skfolio_hc": SkfolioHC,
 }
 
 ESTIMATOR_KEYS = ("method_mu", "method_cov")

@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from workbench.evaluation.agreement import agreement_summary, paired_cells
 from workbench.evaluation.corridor import FAILED_STATUSES, corridor
 from workbench.evaluation.expost import expost_table
 from workbench.evaluation.markdown import md_table, num, pct
@@ -20,6 +21,7 @@ MIN_OOS_PERIODS = 36
 STAT_COLS = ["median", "p25", "p75", "p10", "p90", "share_below_0.25pct"]
 GROUP_VIEWS = {
     "allocator family": "family",
+    "library": "library",
     "risk measure": "rm",
     "estimator": "estimator",
     "constraint set": "constraint_set",
@@ -111,6 +113,7 @@ def _summary(registry, exp, spec: ExperimentSpec, corr, expost, oos, min_oos) ->
     lines += _corridor_section(corr, spec)
     lines += _group_views(registry, exp["experiment_id"])
     lines += _failures(cells)
+    lines += _agreement_section(registry, exp["experiment_id"])
     lines += _oos_section(oos, spec, min_oos)
     lines += _expost_section(expost)
     lines += _live_only_note(variants, corr)
@@ -208,6 +211,21 @@ def message_kind(message: str) -> str:
     """First line of a failure message with numbers masked, so similar failures group."""
     first = message.split("\n")[0][:110]
     return re.sub(r"\d+(\.\d+)?", "#", first)
+
+
+def _agreement_section(registry: Registry, experiment_id: str) -> list[str]:
+    pairs = paired_cells(registry, experiment_id)
+    if pairs.empty:
+        return []  # single-library experiment: nothing to compare
+    lines = ["## Library agreement (Riskfolio-Lib vs skfolio)", "",
+             "Identical configurations solved by both libraries, compared on the candidate's "
+             "capital weight at every rebalance date. Disagreement flags implementation risk; "
+             "HERC/NCO differ by design unless `max_clusters` is set (cluster-count selection).",
+             ""]  # fmt: skip
+    s = agreement_summary(pairs)
+    fmt = {"median_abs_diff": pct(3), "max_abs_diff": pct(3), "n_pairs": num(0),
+           "n_status_mismatch": num(0)}  # fmt: skip
+    return lines + [md_table(s, fmt), ""]
 
 
 def _oos_section(oos: pd.DataFrame, spec: ExperimentSpec, min_oos: int) -> list[str]:

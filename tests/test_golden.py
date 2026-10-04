@@ -22,8 +22,8 @@ SPEC_TEXT = (GOLDEN_DIR / "golden_spec.yaml").read_text()
 
 # Changing the spec file or the canonical form changes these on purpose; update them together.
 EXPECTED_SPEC_HASH = {
-    "walk_forward": "617e84e6ac105c1182efd4f7e44e4b6eeac9dd15c987bf195e505a346e0b889a",
-    "in_sample": "f71b1ad924c8003be8e870ea07f3039930a37baa13b48f136c194488a5c42bee",
+    "walk_forward": "f1d84267d2e4416d78d12ccf7e98586596913aeab0c3b4daf889b9c867ba613e",
+    "in_sample": "49c7d46f2941c9a47ceedb939842597c8226c3835e31b3e20549e6ba1c2b5919",
 }
 KEYS = ("status", "weights", "oos", "corridor")
 

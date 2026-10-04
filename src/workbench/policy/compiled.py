@@ -71,6 +71,19 @@ class CompiledPolicy:
             raise ValueError(f"no bounds for assets {missing}")
         return lo.astype(float), hi.astype(float)
 
+    def box_bounds(self, assets: list[str]) -> tuple[pd.Series, pd.Series]:
+        """Per-asset (lower, upper) bounds intersected with the band box [b - band, b + band].
+
+        The band is a per-asset box, so methods that only take weight bounds (HC) can enforce
+        it exactly this way.
+        """
+        lo, hi = self.bounds(assets)
+        if self.band is not None:
+            bench = self.benchweights.reindex(assets)
+            lo = np.maximum(lo, bench - self.band)
+            hi = np.minimum(hi, bench + self.band)
+        return lo.clip(lower=0.0), hi.clip(upper=1.0)
+
     def tracking_error(self, w: pd.Series, returns: pd.DataFrame) -> float:
         """Ex-ante TE per period of ``w`` vs ``benchweights`` on ``returns`` (Riskfolio def.)."""
         if self.benchweights is None:

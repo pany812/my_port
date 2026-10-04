@@ -9,6 +9,8 @@ from workbench.allocators.base import Allocator
 from workbench.allocators.naive import EqualWeight, InverseVol, SAAPlus, StaticSAA
 from workbench.allocators.riskfolio_hc import RiskfolioHC
 from workbench.allocators.riskfolio_mr import RiskfolioMeanRisk
+from workbench.allocators.skfolio_hc import SkfolioHC
+from workbench.allocators.skfolio_mr import SkfolioMeanRisk
 from workbench.policy.compiled import CompiledPolicy
 
 ALLOCATORS = [
@@ -23,6 +25,10 @@ ALLOCATORS = [
     RiskfolioHC(model="HERC", codependence="spearman", linkage="ward"),
     RiskfolioHC(model="NCO", codependence="pearson", linkage="ward", obj="MinRisk"),
     RiskfolioHC(model="NCO", obj="Sharpe", method_mu="JS", method_cov="gerber1"),
+    SkfolioMeanRisk(method_cov="ledoit", rm="CVaR", obj="Sharpe"),
+    SkfolioMeanRisk(method_mu="JS", method_cov="gerber1", rm="MV", obj="MinRisk"),
+    SkfolioHC(model="HRP", codependence="pearson", linkage="ward"),
+    SkfolioHC(model="HERC", codependence="spearman", linkage="ward"),
 ]
 IDS = [f"{a.name}:{i}" for i, a in enumerate(ALLOCATORS)]
 

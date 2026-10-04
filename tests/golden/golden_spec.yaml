@@ -1,5 +1,6 @@
 # Golden determinism spec: small and fast, exercises walk-forward and in-sample paths,
-# both data variants, a forced policy failure (saa_plus 0.15 > cap) and HC under TE.
+# both data variants, a forced policy failure (saa_plus 0.15 > cap), HC under TE and both
+# libraries (Riskfolio-Lib and skfolio).
 experiment: golden
 seed: 20261004
 data:
@@ -23,6 +24,8 @@ grid:
     - {type: saa_plus, x: [0.05, 0.15]}
     - {type: riskfolio_mean_risk, rm: [MV, CVaR], obj: [MinRisk]}
     - {type: riskfolio_hc, model: [HRP]}
+    - {type: skfolio_mean_risk, rm: [CVaR], obj: [MinRisk]}
+    - {type: skfolio_hc, model: [HRP]}
   constraint_sets:
     - {name: cap10, candidate_cap: 0.10}
     - {name: te_2pct, te_annual: 0.02, candidate_cap: 0.10}

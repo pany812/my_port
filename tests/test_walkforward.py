@@ -8,6 +8,8 @@ from tests.fixtures.synthetic import fit_context, policy, small_market
 from workbench.allocators.base import AllocationResult
 from workbench.allocators.riskfolio_hc import RiskfolioHC
 from workbench.allocators.riskfolio_mr import RiskfolioMeanRisk
+from workbench.allocators.skfolio_hc import SkfolioHC
+from workbench.allocators.skfolio_mr import SkfolioMeanRisk
 from workbench.backtest.schedule import rebalance_dates
 from workbench.backtest.walkforward import WalkForwardEngine
 from workbench.data.synthetic import placeholder_saa
@@ -51,8 +53,13 @@ def test_spy_never_sees_the_future():
 
 @pytest.mark.parametrize(
     "allocator",
-    [RiskfolioMeanRisk(method_cov="ledoit", rm="CVaR", obj="MinRisk"), RiskfolioHC(model="HRP")],
-    ids=["mean_risk", "hc"],
+    [
+        RiskfolioMeanRisk(method_cov="ledoit", rm="CVaR", obj="MinRisk"),
+        RiskfolioHC(model="HRP"),
+        SkfolioMeanRisk(method_cov="ledoit", rm="CVaR", obj="MinRisk"),
+        SkfolioHC(model="HERC"),
+    ],
+    ids=["riskfolio_mean_risk", "riskfolio_hc", "skfolio_mean_risk", "skfolio_hc"],
 )
 def test_future_perturbation_does_not_change_past_weights(allocator):
     """Truncation invariance: scrambling everything after T leaves every fit at t <= T unchanged."""

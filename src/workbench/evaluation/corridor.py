@@ -24,8 +24,20 @@ FAMILIES = {
     "inverse_vol": "naive",
     "riskfolio_mean_risk": "mean_risk",
     "riskfolio_hc": "hc",
+    "skfolio_mean_risk": "mean_risk",
+    "skfolio_hc": "hc",
 }
-GROUP_KEYS = ("family", "allocator", "rm", "estimator", "constraint_set")
+GROUP_KEYS = ("family", "library", "allocator", "rm", "estimator", "constraint_set")
+
+
+def library_of(allocator: str) -> str:
+    """Implementation behind an allocator type: riskfolio, skfolio or own (naive)."""
+    for lib in ("riskfolio", "skfolio"):
+        if allocator.startswith(f"{lib}_"):
+            return lib
+    return "own"
+
+
 QUANTILES = {"p10": 0.10, "p25": 0.25, "median": 0.50, "p75": 0.75, "p90": 0.90}
 
 
@@ -42,6 +54,7 @@ def cell_frame(registry: Registry, experiment_id: str) -> pd.DataFrame:
     params = cells["params_json"].map(json.loads)
     est = cells["estimator_json"].map(loads_or_none)
     df["family"] = df["allocator"].map(FAMILIES).fillna("other")
+    df["library"] = df["allocator"].map(library_of)
     df["rm"] = params.map(lambda p: p.get("rm", "n/a"))
     df["estimator"] = est.map(
         lambda e: "none" if e is None else f"{e['method_mu']}/{e['method_cov']}"
