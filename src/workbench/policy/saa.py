@@ -50,6 +50,13 @@ class SAA:
         return list(self.weights.index)
 
     @classmethod
+    def from_version(cls, version: str, candidate: str = "CAND") -> SAA:
+        """Look up an SAA by version. Phase 1 knows only the synthetic placeholder."""
+        if version in ("example", "placeholder"):
+            return cls.placeholder(candidate)
+        raise ValueError(f"unknown SAA version {version!r}; known: ['example', 'placeholder']")
+
+    @classmethod
     def placeholder(cls, candidate: str = "CAND", candidate_class: str = "alternatives") -> SAA:
         """The synthetic-phase placeholder SAA; candidate range [0, 1] (capped by the policy)."""
         t = PLACEHOLDER_SAA

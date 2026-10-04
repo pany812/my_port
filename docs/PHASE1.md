@@ -128,11 +128,15 @@ risk_lenses: [MV, CVaR, CDaR]
 ```
 experiments(experiment_id, name, spec_yaml, spec_hash, data_vintage, saa_version,
             candidate_id, riskfolio_version, seed, created_at)
-cells(cell_id, experiment_id, allocator, params_json, estimator_json, constraint_set,
-      window_end, status, message, elapsed_s)
+cells(cell_id, experiment_id, cell_index, config_id, allocator, params_json, estimator_json,
+      constraint_set, data_variant, window_end, status, message, elapsed_s, diagnostics_json)
 weights(cell_id, asset_id, weight)
 metrics(cell_id, metric, lens, value)
 ```
+
+`experiment_id` = hash(spec_hash, data_vintage, riskfolio_version); `cell_id` =
+`<experiment_id>:<config_id>:<data_variant>:<window_end>`. `data_vintage` is a sha256 of the
+exact returns, dates and backfill flags. `spec_hash` excludes the cosmetic `experiment` name.
 
 ## Corridor definition
 
