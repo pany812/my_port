@@ -6,6 +6,7 @@ import datetime as dt
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import pandas as pd
 from sqlalchemy import create_engine, delete, event, insert, inspect, select, text
@@ -62,14 +63,26 @@ class Registry:
 
     Opening an existing database whose tables lack columns of the current models raises
     :class:`RegistrySchemaError` (pass ``check=False`` to open it for :meth:`migrate`).
+
+    ``read_only=True`` (the UI, P2-M7) never creates tables and makes writes fail in the
+    database itself: SQLite opens the file with ``mode=ro``; PostgreSQL sessions start with
+    ``default_transaction_read_only=on`` (use a read-only role as well).
     """
 
-    def __init__(self, url: str, check: bool = True) -> None:
+    def __init__(self, url: str, check: bool = True, read_only: bool = False) -> None:
         self.url = url
-        self.engine: Engine = create_engine(url)
+        self.read_only = read_only
+        self.engine: Engine = _engine(url, read_only)
         if self.engine.dialect.name == "sqlite":
             event.listen(self.engine, "connect", _sqlite_foreign_keys)
-        Base.metadata.create_all(self.engine)
+        if read_only:
+            have = set(inspect(self.engine).get_table_names())
+            absent = [t for t in Base.metadata.tables if t not in have]
+            if absent:
+                raise RegistrySchemaError(f"{url} is not a workbench registry (no tables "
+                                          f"{absent}); run an experiment first")  # fmt: skip
+        else:
+            Base.metadata.create_all(self.engine)
         drift = self.schema_drift()
         if check and drift:
             missing = "; ".join(f"{t}: {', '.join(c)}" for t, c in drift.items())
@@ -285,6 +298,22 @@ def _grid_only(query, include_reference: bool):
 
 def _dumps(obj) -> str:
     return json.dumps(obj, sort_keys=True, default=str)
+
+
+def _engine(url: str, read_only: bool) -> Engine:
+    """SQLAlchemy engine; read-only mode is enforced by the database, not by convention."""
+    if not read_only:
+        return create_engine(url)
+    if url.startswith("sqlite:///"):
+        path = url.removeprefix("sqlite:///")
+        if path in ("", ":memory:"):
+            raise ValueError("an in-memory SQLite registry cannot be opened read-only")
+        if not Path(path).exists():
+            raise FileNotFoundError(f"no registry at {path}")
+        return create_engine(f"sqlite:///file:{Path(path).resolve()}?mode=ro&uri=true")
+    if url.startswith(("postgresql", "postgres")):
+        return create_engine(url, connect_args={"options": "-c default_transaction_read_only=on"})
+    raise ValueError(f"read-only mode is supported for SQLite and PostgreSQL, not {url}")
 
 
 def _sqlite_foreign_keys(dbapi_conn, _record) -> None:

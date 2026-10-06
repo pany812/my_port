@@ -33,8 +33,9 @@ src/workbench/
   backtest/     walk-forward engine (reuse riskbench where it fits)
   evaluation/   corridor statistics, risk contributions, ex-post risk table
   registry/     SQLAlchemy models; SQLite in tests, PostgreSQL in production
+  ui/           read-only Streamlit UI over the registry (`wb ui`, optional extra `ui`)
   units.py      the ONLY place annual <-> per-period conversions happen
-  cli.py        `wb run specs/<name>.yaml`, `wb report <experiment>`
+  cli.py        `wb run`, `wb report`, `wb memo`, `wb migrate`, `wb ui`
 specs/          experiment specs (YAML)
 tests/          pytest, synthetic fixtures only
 ```
@@ -109,6 +110,13 @@ tests/          pytest, synthetic fixtures only
   significance 5% pending house conventions). Kill criteria (`te_vs_saa`, `active_return` over
   n months) are replayed on the stored path of `saa_plus` at the proposed weight and funding.
   Candidate and SAA profiles are `evidence` rows (subjects `profile:candidate`, `profile:saa`).
+- UI (P2-M7, `ui/`): read-only by construction (`Registry(read_only=True)`: SQLite `mode=ro`,
+  PostgreSQL `default_transaction_read_only`); a test checks the database file is byte-identical
+  after a session. `ui/data.py` is plain functions (no Streamlit) over the same evaluation code as
+  the report and memo; `ui/app.py` only lays out. `wb ui` binds to localhost with usage statistics
+  off (Streamlit's defaults are all interfaces and telemetry on) and no Deploy button;
+  `.streamlit/config.toml` repeats this. `streamlit==1.65.0` is the optional extra `ui` and in
+  the dev group; UI tests skip without it.
 - Max-Sharpe with no feasible positive expected excess return over rf is undefined: both
   mean-risk allocators record `infeasible` with the reason (`policy.skfolio.sharpe_undefined`).
 - Evidence (P2-M1, `evaluation/inference.py`, `evaluation/evidence.py`) is disclosure, never a
@@ -252,7 +260,8 @@ Checked on synthetic data (October 2026):
 - Mandate-adherence analyzer. TODO(Patrik): location. Source of policy rules for `policy/`.
 - Data: Bloomberg (blpapi) → PostgreSQL. TODO(Patrik): schema and tables for building-block and
   candidate returns. Loaders read from PostgreSQL only; no live Bloomberg calls in this package.
-- UI: Streamlit over the registry. Phase 2, not now.
+- UI: Streamlit over the registry (P2-M7, `wb ui`). Local only for now; a shared server against
+  PostgreSQL needs authentication in front (SSO via a reverse proxy) and a read-only DB role.
 
 ## Working style
 

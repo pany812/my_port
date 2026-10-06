@@ -1,4 +1,4 @@
-"""Command line: ``wb run specs/<name>.yaml``, ``wb report <experiment>``, ``wb memo <experiment>``.
+"""Command line: ``wb run``, ``wb report``, ``wb memo``, ``wb migrate`` and ``wb ui``.
 
 The registry URL comes from ``--registry``, else ``$WB_REGISTRY``, else
 ``sqlite:///out/registry.db``. Reports go to ``<out>/<experiment name>/``.
@@ -10,6 +10,7 @@ import argparse
 import logging
 import os
 import re
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -33,6 +34,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "migrate":
             return _migrate(args)
+        if args.command == "ui":
+            return _ui(args)
         registry = _open_registry(args.registry)
         if args.command == "run":
             return _run(args, registry)
@@ -40,7 +43,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _memo(args, registry)
         return _report(args, registry)
     except (SpecError, KeyError, FileNotFoundError, NotImplementedError,
-            RegistrySchemaError, MemoError) as e:  # fmt: skip
+            RegistrySchemaError, MemoError, UIError) as e:  # fmt: skip
         sys.stderr.write(f"wb: error: {e}\n")
         return 2
 
@@ -88,6 +91,32 @@ def _memo(args, registry: Registry) -> int:
     return 0
 
 
+class UIError(ValueError):
+    """The UI cannot start (missing extra, or no readable registry)."""
+
+
+# Safe defaults (P2-M7): this machine only, no usage statistics, no browser auto-launch, no
+# "Deploy" button (it offers to publish the app to Streamlit's cloud).
+UI_FLAGS = ("--server.address", "localhost", "--server.headless", "true",
+            "--browser.gatherUsageStats", "false", "--client.toolbarMode", "minimal")  # fmt: skip
+
+
+def _ui(args) -> int:
+    try:
+        import streamlit  # noqa: F401
+    except ImportError:
+        raise UIError("the UI needs the ui extra: uv sync --extra ui") from None
+    try:
+        Registry(args.registry, read_only=True)  # fail fast; never creates a database
+    except (ValueError, FileNotFoundError) as e:
+        raise UIError(f"cannot open the registry read-only: {e}") from None
+    app = Path(__file__).parent / "ui" / "app.py"
+    cmd = [sys.executable, "-m", "streamlit", "run", str(app), *UI_FLAGS,
+           "--server.port", str(args.port)]  # fmt: skip
+    _emit(f"workbench UI on http://localhost:{args.port} (read-only: {args.registry})\n")
+    return subprocess.call(cmd, env={**os.environ, "WB_REGISTRY": args.registry})
+
+
 def _migrate(args) -> int:
     reg = _open_registry(args.registry, check=False)
     actions = reg.migrate()
@@ -121,6 +150,8 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "migrate", parents=[common], help="add columns from newer versions to an existing registry"
     )
+    ui = sub.add_parser("ui", parents=[common], help="browse the registry (read-only, localhost)")
+    ui.add_argument("--port", type=int, default=8501, help="port (default: %(default)s)")
     return p
 
 

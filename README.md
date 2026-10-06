@@ -19,6 +19,7 @@ uv run pytest -q                          # must pass before every commit
 uv run wb run specs/example_synthetic.yaml -v
 uv run wb report synthetic_trend_v1       # rebuild the report from the registry
 uv run wb memo synthetic_trend_v1         # IC memo (SCQA) from the registry
+uv run wb ui                              # browse the registry (read-only, localhost:8501)
 ```
 
 `wb run` writes the registry (default `sqlite:///out/registry.db`; override with `--registry` or
@@ -205,6 +206,15 @@ information, not gates. `decision` is not part of `spec_hash`: edit it after a r
 revised file with `wb memo <experiment> --spec specs/x.yaml` (refused if anything else changed).
 Without a `decision` block the memo is a DRAFT around the corridor median. Add `saa_plus` at the
 proposed weight to the grid (and to `stress.weights`) so the memo has evidence at that weight.
+
+**Workbench UI.** `wb ui [--registry URL] [--port 8501]` opens a read-only Streamlit UI over the
+registry: experiments and provenance, the corridor through time (grouped by family, library, risk
+measure, estimator or constraint set), every cell (weights vs the SAA, risk shares, diagnostics),
+out-of-sample wealth and drawdown paths, evidence (tests net of search, profiles, spanning, risk
+budgets, sweeps, Black–Litterman, stress), library agreement and the memo (with downloads). The
+registry is opened read-only (the database refuses writes); the server binds to localhost with
+Streamlit's usage statistics off. It needs the `ui` extra (`uv sync --extra ui`; the dev group
+already includes it).
 
 **Two libraries.** `skfolio_mean_risk` and `skfolio_hc` take the same parameters as their
 `riskfolio_*` twins (estimator names in Riskfolio vocabulary; unmapped names are recorded as

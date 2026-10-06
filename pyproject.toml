@@ -13,6 +13,9 @@ dependencies = [
     "scipy>=1.17.1",
 ]
 
+[project.optional-dependencies]
+ui = ["streamlit==1.65.0"]  # read-only workbench UI (`wb ui`, P2-M7)
+
 [project.scripts]
 wb = "workbench.cli:main"
 
@@ -20,6 +23,7 @@ wb = "workbench.cli:main"
 dev = [
     "pytest",
     "ruff",
+    "streamlit==1.65.0",  # so the UI tests run; keep in step with the ui extra
 ]
 
 [build-system]

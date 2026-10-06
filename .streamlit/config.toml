@@ -1,0 +1,12 @@
+# Workbench UI (P2-M7). `wb ui` passes the same settings on the command line; this file makes a
+# direct `streamlit run src/workbench/ui/app.py` from the repository root equally safe.
+
+[browser]
+gatherUsageStats = false   # Streamlit's default is true (telemetry)
+
+[server]
+address = "localhost"      # default is unset: every network interface
+headless = true
+
+[client]
+toolbarMode = "minimal"    # hides "Deploy" (publishing to Streamlit's cloud)

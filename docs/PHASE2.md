@@ -111,7 +111,9 @@ the house template exists). `wb memo <experiment>`: an SCQA markdown memo from t
 `decision:` block holds target corridor, conditions and kill criteria (e.g. "revisit if
 realised TE > x for n months"). Format to follow the house template (open question).
 
-**P2-M7 Workbench UI.** Read-only Streamlit over the registry: pick an experiment, read the
+**P2-M7 Workbench UI.** *Built 2026-10-06* (`wb ui`; streamlit==1.65.0 as optional extra
+`ui`; read-only registry mode enforced by the database; localhost, telemetry off; pages:
+experiments, corridor, cells, paths, evidence, libraries, memo). Read-only Streamlit over the registry: pick an experiment, read the
 corridor, drill into any cell (weights, diagnostics, path), compare libraries. New
 dependency: `streamlit`.
 
