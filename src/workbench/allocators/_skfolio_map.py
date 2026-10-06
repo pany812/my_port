@@ -30,6 +30,8 @@ from skfolio.moments import (
 from skfolio.optimization import ObjectiveFunction
 from skfolio.prior import EmpiricalPrior
 
+from workbench.allocators._estimates import CMA_MU
+
 BETA = 0.95  # CVaR / CDaR confidence, Riskfolio alpha = 0.05
 
 _MU = {
@@ -87,13 +89,22 @@ def _get(table: dict, key: str, what: str):
 
 def prior(method_mu: str, method_cov: str, mu_override: pd.Series | None = None,
           assets: list[str] | None = None) -> EmpiricalPrior:  # fmt: skip
-    """EmpiricalPrior with mapped estimators (or a fixed mu from ``mu_override``)."""
+    """EmpiricalPrior with mapped estimators (or a fixed mu from ``mu_override``, which
+    ``method_mu="cma"`` requires)."""
     cov = _get(_COV, method_cov, "method_cov")()
     if mu_override is not None:
         mu = FixedMu(mu_override.reindex(assets).to_numpy(dtype=float))
+    elif method_mu == CMA_MU:
+        raise ValueError("method_mu 'cma' needs ctx.mu_override (set by the runner from the "
+                         "spec's cma section)")  # fmt: skip
     else:
         mu = _get(_MU, method_mu, "method_mu")()
     return EmpiricalPrior(mu_estimator=mu, covariance_estimator=cov)
+
+
+def covariance_estimator(method_cov: str):
+    """Factory for the mapped skfolio covariance estimator (a fresh instance per call)."""
+    return _get(_COV, method_cov, "method_cov")
 
 
 def risk_measure(rm: str, obj: str | None = None) -> RiskMeasure:

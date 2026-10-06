@@ -4,6 +4,8 @@
   each target risk share, per lens, with the realised share.
 - :func:`sweep_view`: "what fits inside a TE budget?" (or any swept constraint key): the
   candidate's corridor and realised out-of-sample TE per swept value.
+- :func:`breakeven_view` / :func:`weight_by_view` (P2-M4): "what would it have to earn?"
+  (Black–Litterman breakeven per target weight) and "what weight does a view give?".
 """
 
 from __future__ import annotations
@@ -114,3 +116,96 @@ def sweep_view(registry: Registry, experiment_id: str) -> pd.DataFrame:
                 tuple(swept[r["constraint_set"]]["keys"].values()))  # fmt: skip
 
     return pd.DataFrame(sorted(rows, key=order)).reset_index(drop=True)
+
+
+BL_SETTINGS = ["obj", "prior_sharpe", "method_cov"]
+
+
+def _bl_cells(registry: Registry, experiment_id: str) -> pd.DataFrame:
+    cells = registry.cells(experiment_id)
+    bl = cells[cells["allocator"].map(FAMILIES) == "black_litterman"].copy()
+    if bl.empty:
+        return bl
+    params = pd.Series([full_params(a, json.loads(p)) for a, p in
+                        zip(bl["allocator"], bl["params_json"], strict=True)],
+                       index=bl.index)  # fmt: skip
+    for k in ("view_annual", "confidence", "target_weight", *BL_SETTINGS):
+        bl[k] = params.map(lambda p, k=k: p[k])
+    bl["library"] = bl["allocator"].map(library_of)
+    bl["weight"] = _candidate_weights(registry, experiment_id, bl)
+    diag = bl["diagnostics_json"].map(json.loads)
+    for k in (
+        "equilibrium_excess_annual",
+        "premium_annual",
+        "posterior_excess_annual",
+        "candidate_sharpe_annual",
+        "unconstrained_sharpe_annual",
+        "rho_saa",
+    ):
+        bl[k] = pd.to_numeric(diag.map(lambda d, k=k: d.get(k)), errors="coerce")
+    return bl
+
+
+def _q(x: pd.Series, q: float) -> float:
+    x = x.dropna().to_numpy(float)
+    return float(np.quantile(x, q)) if len(x) else np.nan
+
+
+def breakeven_view(registry: Registry, experiment_id: str) -> pd.DataFrame:
+    """Black–Litterman breakeven per (variant, constraint set, target weight, library, settings).
+
+    Over rebalance dates (annual, decimal): excess_median / _p25 / _p75 = expected excess return
+    over rf the candidate needs (posterior, full confidence) for the optimiser to give it the
+    target weight; equilibrium_median = what the SAA prior implies; premium_median = the
+    difference; sharpe_median = required Sharpe ratio; sharpe_unconstrained_median = the
+    closed form without policy limits; excess_latest = median at the latest date. n_reached =
+    ok cells; n_unreachable = targets a policy limit stops (``infeasible``, counted).
+    """
+    bl = _bl_cells(registry, experiment_id)
+    if bl.empty or bl["target_weight"].isna().all():
+        return pd.DataFrame()
+    bl = bl[bl["target_weight"].notna()]
+    keys = ["data_variant", "constraint_set", "target_weight", "library", *BL_SETTINGS]
+    rows = []
+    for k, g in bl.groupby(keys, sort=True):
+        ok = g[g["status"] == "ok"]
+        last = ok[ok["window_end"] == ok["window_end"].max()] if not ok.empty else ok
+        rows.append({
+            **dict(zip(keys, k, strict=True)),
+            "n_cells": len(g), "n_reached": len(ok),
+            "n_unreachable": int(g["message"].fillna("").str.contains("unreachable").sum()),
+            "excess_median": _q(ok["posterior_excess_annual"], 0.5),
+            "excess_p25": _q(ok["posterior_excess_annual"], 0.25),
+            "excess_p75": _q(ok["posterior_excess_annual"], 0.75),
+            "equilibrium_median": _q(g["equilibrium_excess_annual"], 0.5),
+            "premium_median": _q(ok["premium_annual"], 0.5),
+            "sharpe_median": _q(ok["candidate_sharpe_annual"], 0.5),
+            "sharpe_unconstrained_median": _q(g["unconstrained_sharpe_annual"], 0.5),
+            "excess_latest": _q(last["posterior_excess_annual"], 0.5),
+        })  # fmt: skip
+    return pd.DataFrame(rows)
+
+
+def weight_by_view(registry: Registry, experiment_id: str) -> pd.DataFrame:
+    """Candidate weight per stated view (variant, constraint set, view, confidence, library,
+    settings): weight_median / _p25 / _p75 over dates, weight_latest, equilibrium_median and
+    posterior_median (the candidate's posterior expected excess return; annual, decimal)."""
+    bl = _bl_cells(registry, experiment_id)
+    if bl.empty or bl["view_annual"].isna().all():
+        return pd.DataFrame()
+    bl = bl[bl["view_annual"].notna()]
+    keys = ["data_variant", "constraint_set", "view_annual", "confidence", "library",
+            *BL_SETTINGS]  # fmt: skip
+    rows = []
+    for k, g in bl.groupby(keys, sort=True):
+        ok = g[g["status"] == "ok"]
+        last = ok[ok["window_end"] == ok["window_end"].max()] if not ok.empty else ok
+        rows.append({
+            **dict(zip(keys, k, strict=True)),
+            "n_cells": len(g), "n_ok": len(ok),
+            "weight_median": _q(ok["weight"], 0.5), "weight_p25": _q(ok["weight"], 0.25),
+            "weight_p75": _q(ok["weight"], 0.75), "weight_latest": _q(last["weight"], 0.5),
+            "equilibrium_median": _q(g["equilibrium_excess_annual"], 0.5),
+            "posterior_median": _q(ok["posterior_excess_annual"], 0.5),
+        })  # fmt: skip
+    return pd.DataFrame(rows)

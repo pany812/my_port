@@ -53,7 +53,9 @@ class SkfolioRiskBudget:
                     est = RiskBudgeting(
                         risk_measure=sk.risk_measure(self.rm),
                         risk_budget=b.to_numpy(),
-                        prior_estimator=sk.prior(self.method_mu, self.method_cov, None, assets),
+                        prior_estimator=sk.prior(
+                            self.method_mu, self.method_cov, c.mu_override, assets
+                        ),
                         cvar_beta=sk.BETA,
                         cdar_beta=sk.BETA,
                         solver=solver,

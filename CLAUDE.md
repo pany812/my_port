@@ -78,6 +78,23 @@ tests/          pytest, synthetic fixtures only
 - Constraint-set keys and sections added after Phase 1 enter the canonical form only when set
   (existing `spec_hash`/`config_id` unchanged); `sweep` metadata is never hashed, so a sweep and
   the same sets listed by hand are identical.
+- CMAs (P2-M4, `data/cma.py`): `method_mu: cma` in `grid.estimators` takes the mean from the
+  spec's `cma` (versioned, dated vectors of expected annual arithmetic total returns, candidate
+  included; `(1 + r)^(1/n) - 1`). Point in time: a fit uses the latest vector effective on or
+  before its date; a fit before the first vector is a `SpecError`, never a silent look-ahead.
+  The resolved values enter the canonical form, so `spec_hash` changes when a CMA does.
+  `placeholder` is the synthetic truth (an oracle). SAA weights are still hashed by version
+  name only (fix with real SAA versions, P2-M8).
+- Black–Litterman (P2-M4, `allocators/_bl.py`): the SAA is the prior, `pi = delta Sigma w_SAA`
+  with `delta = prior_sharpe / sigma_SAA` (positive, frequency-free); one view on the candidate;
+  our posterior formula, verified against both libraries. BL changes mu only (covariance stays
+  the estimator's, so tau cancels), MV only, `obj` Sharpe or Utility with `l = delta / 2` (the
+  only value for which no view returns the SAA). `target_weight` root-finds the posterior
+  premium per date (bracket from the closed form, bisect to 1e-4 weight); a target above the
+  policy's maximum feasible candidate weight, or needing a Sharpe > 3, is `infeasible`
+  ("unreachable"). BL allocators take `method_cov` as a parameter, not from `grid.estimators`.
+- Max-Sharpe with no feasible positive expected excess return over rf is undefined: both
+  mean-risk allocators record `infeasible` with the reason (`policy.skfolio.sharpe_undefined`).
 - Evidence (P2-M1, `evaluation/inference.py`, `evaluation/evidence.py`) is disclosure, never a
   gate, and never changes a cell's status. Sharpe ratios are on returns in excess of the SAA's
   cash asset (or the policy rf): raw-return Sharpe inflates cash-heavy portfolios. Spanning
@@ -143,6 +160,16 @@ or by running it on synthetic data (October 2026).
   CDaR on historical scenarios contributions are not unique: the realised share differs from
   the target at the optimum (Riskfolio and skfolio give the same weights), and on short windows
   (36 months, ~2 tail scenarios) different targets can give nearly the same weight.
+- `black_litterman` / `blacklitterman_stats` fix tau = 1/T and Omega = diag(P tau Sigma P'), i.e.
+  confidence 0.5 (not configurable). The default delta is `(w' mu_hist - rf) / (w' Sigma w)` on the
+  window: negative in about a third of 36-month synthetic windows, which flips the prior. With
+  `model="BL"`, `hist=True` uses the sample covariance, not `cov_bl`. We use our own posterior.
+- Classic `obj="Utility"` with MV maximises `mu'w - l w' Sigma w` (variance, no 1/2).
+- Max-Sharpe returns None when no feasible portfolio has a positive expected excess return over
+  rf, and sometimes when the best one is barely positive (<= 0.2% p.a.; skfolio solves those:
+  4 of 172 pairs in the BL example, visible in the agreement section).
+- Reusing one `Portfolio` and changing only `port.mu` between `optimization` calls gives the
+  same weights as a fresh object (the BL root-finder relies on it).
 - `assets_stats` has no `detone` argument (use `dict_cov`). Denoising `fixed`/`spectral`/`shrink`
   works in Classic and HC; **detoned covariances are not PSD** (min eigenvalue ~ -7e-4): keep
   detoning out of optimisers.
@@ -176,6 +203,14 @@ Checked on synthetic data (October 2026):
   `SLPM` -> `SEMI_DEVIATION`, both with `min_acceptable_return=rf` (a **scalar**: an array raises
   "unhashable type"). Denoised `fixed` -> `DenoiseCovariance` (identical); `spectral`/`shrink`
   have no skfolio equivalent. `RiskBudgeting` gives Riskfolio's risk-budget weights to ~1e-5.
+- `BlackLitterman` (views as strings: format numbers as `float(x)!r`, since a numpy 2 scalar's
+  repr is `np.float64(...)`) equals our posterior for every tau and confidence; with one view
+  `view_confidences=[k]` moves the asset exactly k of the way to the view (Idzorek). Its
+  posterior covariance is not used. `EquilibriumMu(risk_aversion, weights)` gives `delta Sigma w`.
+- MeanRisk max-Sharpe raises `SolverError` when no feasible portfolio has a positive excess
+  return (classified with `sharpe_undefined`). Max-Sharpe is flat along the cash direction:
+  weights carry ~1e-4 noise (cash up to 0.2pp), so the BL root-finder can step over a target by
+  up to ~3e-4 (`diagnostics["jump"]`).
 - **Bounded HRP/HERC returns NaN weights** when lower bounds bind: `_hrp.py:486` divides by
   `weights[cluster[0]]`, which is 0 once an asset is pushed to zero (0/0). Upper bounds alone
   are fine. Riskfolio solves the same bounds. `SkfolioHC` maps non-finite weights to

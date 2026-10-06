@@ -29,7 +29,7 @@ uv run wb report synthetic_trend_v1       # rebuild the report from the registry
 | `corridor.csv` | corridor per data variant × rebalance date × measure (counts by status, P10–P90, share below 0.25%) |
 | `oos.csv` | walk-forward out-of-sample statistics per configuration vs the SAA path |
 | `expost.csv` | in-sample statistics per cell and rebalance date (diagnostic only) |
-| `summary.md` | provenance, cell counts, corridor (latest and through time), group-by views, failures, OOS vs SAA, **evidence net of search** (Sharpe test vs SAA with BH-adjusted p, deflated Sharpe, PBO, spanning), live-only variant, definitions |
+| `summary.md` | provenance (and CMA), cell counts, corridor (latest and through time), group-by views, failures, library agreement, risk budgets, **Black–Litterman breakeven**, constraint sweeps, OOS vs SAA, **evidence net of search** (Sharpe test vs SAA with BH-adjusted p, deflated Sharpe, PBO, spanning), live-only variant, definitions |
 
 If a registry was created by an older version, `wb` refuses to write to it and asks for
 `wb migrate`, which adds the new columns and backfills them exactly (older experiments had no
@@ -68,6 +68,7 @@ data:
 saa: {version: example}
 funding: pro_rata                    # saa_plus default: pro_rata | asset:<id> | class:<name>
 rf_annual: 0.0
+cma: {version: placeholder}          # optional: expected returns for method_mu: cma (see below)
 window: {kind: rolling, periods: 120}          # or {kind: expanding, min_periods: 36}
 rebalance: {kind: calendar, every: M}          # M | Q | A; or {kind: threshold, every: M, band: 0.01}
 costs: {default_bps: 5, per_asset: {EM_EQ: 20, CAND: 0}}  # optional: one-way bps of traded weight
@@ -77,6 +78,7 @@ grid:
   estimators:                        # applied to Riskfolio-Lib allocators only
     - {method_mu: hist, method_cov: ledoit}
     - {method_mu: JS, method_cov: gerber1}
+    - {method_mu: cma, method_cov: ledoit}     # mean from the spec's cma, point in time
   allocators:                        # a list value is a grid dimension
     - {type: static_saa}
     - {type: saa_plus, x: [0.02, 0.05, 0.10]}
@@ -86,6 +88,8 @@ grid:
     - {type: riskfolio_hc, model: [HRP, HERC], codependence: [pearson, spearman], linkage: [ward]}
     - {type: skfolio_mean_risk, rm: [CVaR], obj: [MinRisk]}   # same parameters, second library
     - {type: skfolio_hc, model: [HRP], max_clusters: 3}      # max_clusters: skfolio only
+    - {type: riskfolio_bl, target_weight: [0.05, 0.10]}      # breakeven: what must it earn?
+    - {type: riskfolio_bl, view_annual: [0.02], confidence: [0.5]}  # weight at a stated view
   constraint_sets:
     - {name: bands_5pct, band: 0.05, candidate_cap: 0.10}
     - {name: te_2pct, te_annual: 0.02, candidate_cap: 0.10}
@@ -132,6 +136,35 @@ periods.
 each target implies per lens and the realised share. Downside lenses `MSV`, `FLPM`, `SLPM` work
 in `rm` and `risk_lenses`; denoised covariances `fixed`, `spectral`, `shrink` in `method_cov`.
 Add `SCS` to `solvers` for risk budgets. See `specs/example_risk_budgets.yaml`.
+
+**Return assumptions (CMA).** `method_mu: cma` in `grid.estimators` takes expected returns from
+the spec's `cma` section instead of the window's history, so CMA vs historical means is a grid
+dimension. `cma: {version: placeholder}` is the synthetic truth (an oracle, for testing); a real
+version is written inline as dated vectors of expected annual total returns for every asset,
+candidate included:
+
+```yaml
+cma:
+  version: house_2026q3
+  vectors:
+    - {effective: 2016-01, returns_annual: {SE_EQ: 0.065, GL_EQ: 0.06, CAND: 0.05}}  # all assets
+    - {effective: 2021-01, returns_annual: {SE_EQ: 0.07, GL_EQ: 0.065, CAND: 0.045}}
+```
+
+Each fit uses the latest vector effective on or before its date; a fit before the first vector
+is an error (set `backtest.start`). The resolved values are part of `spec_hash`. Values are
+expected annual (arithmetic) returns, converted with `(1 + r)^(1/n) − 1`.
+
+**Black–Litterman breakeven.** `riskfolio_bl` / `skfolio_bl` use the SAA as the prior: the
+equilibrium excess returns that make the SAA optimal, scaled by `prior_sharpe` (the SAA's
+assumed annual Sharpe ratio, default 0.3). One view on the candidate's expected excess return
+over rf. Two modes, exactly one per entry:
+`view_annual` + `confidence` gives the weight a stated view earns; `target_weight` root-finds,
+at every date, the expected excess return the candidate needs for that weight (an unreachable
+target, e.g. above a band, is `infeasible` and counted). `obj: Sharpe | Utility`, `method_cov` as
+a parameter; mean-variance only. The report adds "What would it have to earn?" with the required
+excess return, the equilibrium, the premium, the required Sharpe and the unconstrained closed
+form. See `specs/example_black_litterman.yaml`.
 
 **Two libraries.** `skfolio_mean_risk` and `skfolio_hc` take the same parameters as their
 `riskfolio_*` twins (estimator names in Riskfolio vocabulary; unmapped names are recorded as

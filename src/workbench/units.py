@@ -86,3 +86,8 @@ def te_annual_to_period(te_annual: float, freq: str) -> float:
 def sharpe_period_to_annual(sr_period: float, freq: str) -> float:
     """Per-period Sharpe (or information) ratio to annual: SR * sqrt(n) (i.i.d. scaling)."""
     return sr_period * math.sqrt(periods_per_year(freq))
+
+
+def sharpe_annual_to_period(sr_annual: float, freq: str) -> float:
+    """Annual Sharpe ratio to per-period: SR / sqrt(n) (i.i.d. scaling)."""
+    return sr_annual / math.sqrt(periods_per_year(freq))

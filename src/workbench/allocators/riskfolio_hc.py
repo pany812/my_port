@@ -7,7 +7,7 @@ from dataclasses import asdict, dataclass
 import pandas as pd
 import riskfolio as rp
 
-from workbench.allocators._estimates import expected_returns
+from workbench.allocators._estimates import estimate_mu_method, expected_returns
 from workbench.allocators._solve import Infeasible, guarded_fit
 from workbench.allocators.base import AllocationResult, FitContext
 from workbench.policy.riskfolio import hc_bounds, hc_bounds_problem
@@ -24,7 +24,8 @@ class RiskfolioHC:
     linkage:      e.g. "ward", "single".
     rm / obj:     risk measure; objective (used by NCO; "MinRisk" etc.).
     method_mu:    mean estimator; mu is computed here (real-valued, see ``_estimates``) and
-                  passed as ``custom_mu``. ``ctx.mu_override`` (per period) takes precedence.
+                  passed as ``custom_mu``. ``ctx.mu_override`` (per period) takes precedence;
+                  ``"cma"`` requires it.
     method_cov:   covariance estimator passed to ``HCPortfolio.optimization``.
     Asset bounds and the band are enforced via ``w_max``/``w_min``; class limits and TE are
     not enforceable in HC and are caught by the policy post-check.
@@ -56,10 +57,11 @@ class RiskfolioHC:
                 raise Infeasible(f"HC bounds infeasible: {problem}")
             hc = rp.HCPortfolio(returns=r, w_max=w_max, w_min=w_min, solvers=list(c.policy.solvers))
             diag["solvers"] = list(c.policy.solvers)
+            mu_method = estimate_mu_method(self.method_mu, c)
             if c.mu_override is not None:
                 mu = c.mu_override.reindex(assets).astype(float)
             else:
-                mu, diag["mu_cast_from_complex"] = expected_returns(r, self.method_mu)
+                mu, diag["mu_cast_from_complex"] = expected_returns(r, mu_method)
             return hc.optimization(
                 model=self.model,
                 codependence=self.codependence,

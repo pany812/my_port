@@ -28,6 +28,8 @@ FAMILIES = {
     "skfolio_hc": "hc",
     "riskfolio_risk_budget": "risk_budget",
     "skfolio_risk_budget": "risk_budget",
+    "riskfolio_bl": "black_litterman",
+    "skfolio_bl": "black_litterman",
 }
 GROUP_KEYS = ("family", "library", "allocator", "rm", "estimator", "constraint_set")
 

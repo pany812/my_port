@@ -19,6 +19,7 @@ from typing import Literal
 import pandas as pd
 import riskfolio
 
+from workbench.allocators._estimates import CMA_MU
 from workbench.allocators.base import AllocationResult, FitContext
 from workbench.allocators.factory import build
 from workbench.backtest.schedule import rebalance_dates, window_at
@@ -105,6 +106,11 @@ def run_experiment(
     saa = SAA.from_version(spec.saa_version, spec.data.candidate)
     if set(saa.assets) != set(data.assets):
         raise ValueError(f"SAA assets {saa.assets} do not match data assets {data.assets}")
+    if spec.cma is not None:
+        try:
+            spec.cma.check_covers(saa.assets)
+        except ValueError as e:
+            raise SpecError(str(e)) from None
     policies = {
         cs.name: compile_policy(saa, cs, spec.data.frequency, spec.rf_annual, spec.solvers)
         for cs in spec.constraint_sets
@@ -170,6 +176,7 @@ def _in_sample_variant(
         end = returns.index[-1]
         return [_failed_cell(ctx, cfg, variant, end, str(e)) for cfg in configs]
     as_of = window.index[-1]
+    _check_cma_dates(ctx, configs, as_of, variant)
     out = []
     for cfg in configs:
         try:
@@ -199,6 +206,7 @@ def _walk_forward_variant(
         end = returns.index[-1]
         return [_failed_cell(ctx, cfg, variant, end, msg) for cfg in configs], [], {}, None
 
+    _check_cma_dates(ctx, configs, schedule[0], variant)
     costs = _cost_series(spec, ctx.saa)
     threshold = spec.rebalance.band if spec.rebalance.kind == "threshold" else None
 
@@ -289,9 +297,30 @@ def _add_execution(rec: CellRecord, fit) -> None:
 # --- cells -----------------------------------------------------------------------------
 
 
+def _uses_cma(cfg: CellConfig) -> bool:
+    return cfg.estimator is not None and cfg.estimator["method_mu"] == CMA_MU
+
+
+def _check_cma_dates(
+    ctx: _Context, configs: list[CellConfig], first_fit: pd.Timestamp, variant: str
+) -> None:
+    """No silent look-ahead: every CMA fit needs a vector in effect at its date."""
+    cma = ctx.spec.cma
+    if cma is None or not any(_uses_cma(c) for c in configs):
+        return
+    if first_fit < cma.first_effective:
+        raise SpecError(f"cma {cma.version!r} starts {cma.vectors[0].effective} but variant "
+                        f"{variant!r} fits from {first_fit.date()}: set backtest.start on or "
+                        "after the CMA's first vector")  # fmt: skip
+
+
 def _fit_context(ctx: _Context, cfg: CellConfig, as_of: pd.Timestamp) -> FitContext:
+    """Per-cell context; ``method_mu: cma`` cells get the CMA in effect at ``as_of``."""
+    mu = None
+    if _uses_cma(cfg):
+        mu = ctx.spec.cma.mu_period(as_of, ctx.spec.data.frequency, ctx.saa.assets)
     return FitContext(as_of=as_of, saa=ctx.saa.weights, candidate=ctx.saa.candidate,
-                      policy=ctx.policies[cfg.constraint_set])  # fmt: skip
+                      policy=ctx.policies[cfg.constraint_set], mu_override=mu)  # fmt: skip
 
 
 def _blank_cell(ctx: _Context, cfg: CellConfig, variant: str, as_of: pd.Timestamp) -> CellRecord:

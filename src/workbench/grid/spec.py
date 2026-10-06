@@ -19,7 +19,9 @@ from typing import Any
 
 import yaml
 
+from workbench.allocators._estimates import CMA_MU
 from workbench.allocators.factory import allowed_params, uses_estimator
+from workbench.data.cma import CMA, PLACEHOLDER, CMAVector, placeholder_cma
 from workbench.policy.compiler import ConstraintSet
 from workbench.units import periods_per_year
 
@@ -131,6 +133,7 @@ class ExperimentSpec:
     risk_lenses: tuple[str, ...]
     costs: CostsSpec | None = None
     liquidity: LiquiditySpec | None = None
+    cma: CMA | None = None
     rf_annual: float = 0.0
     solvers: tuple[str, ...] = ("CLARABEL",)
     source_text: str | None = None  # raw YAML as written; stored in the registry, not hashed
@@ -138,8 +141,9 @@ class ExperimentSpec:
     def canonical(self) -> dict[str, Any]:
         """Normalised, JSON-serialisable form with every default filled in (no name, no text).
 
-        Optional sections added after Phase 1 (costs, liquidity, rebalance.band) enter only when
-        set, so specs that do not use them keep their spec_hash.
+        Optional sections added after Phase 1 (costs, liquidity, rebalance.band, cma) enter only
+        when set, so specs that do not use them keep their spec_hash. The CMA enters resolved
+        (every vector's values), so changing a CMA changes the hash even under the same version.
         """
         rebalance = asdict(self.rebalance)
         if rebalance["band"] is None:
@@ -165,6 +169,8 @@ class ExperimentSpec:
             out["costs"] = asdict(self.costs)
         if self.liquidity is not None:
             out["liquidity"] = asdict(self.liquidity)
+        if self.cma is not None:
+            out["cma"] = self.cma.canonical()
         return out
 
     @property
@@ -208,6 +214,7 @@ def parse_spec(src: str | dict) -> ExperimentSpec:
             "solvers",
             "costs",
             "liquidity",
+            "cma",
         },
     )
     data = _data(top["data"])
@@ -221,6 +228,12 @@ def parse_spec(src: str | dict) -> ExperimentSpec:
         _allocator(a, f"grid.allocators[{i}]", funding) for i, a in enumerate(allocator_list)
     )
     estimators = _estimators(grid.get("estimators"), allocators)
+    cma = _cma(top["cma"], data) if "cma" in top else None
+    uses_cma = any(e["method_mu"] == CMA_MU for e in estimators)
+    if uses_cma and cma is None:
+        raise SpecError("grid.estimators uses method_mu: cma but the spec has no cma section")
+    if cma is not None and not uses_cma:
+        raise SpecError("cma is set but no grid.estimators entry uses method_mu: cma")
     constraint_sets = _constraint_sets(grid["constraint_sets"])
     seed = top["seed"]
     if not isinstance(seed, int) or isinstance(seed, bool):
@@ -236,6 +249,7 @@ def parse_spec(src: str | dict) -> ExperimentSpec:
         backtest=_backtest(top.get("backtest", {})),
         costs=_costs(top["costs"]) if "costs" in top else None,
         liquidity=_liquidity(top["liquidity"], data.frequency) if "liquidity" in top else None,
+        cma=cma,
         estimators=estimators,
         allocators=allocators,
         constraint_sets=constraint_sets,
@@ -333,6 +347,41 @@ def _liquidity(d: Any, data_freq: str) -> LiquiditySpec:
     if spec.gate is not None and not 0 < spec.gate <= 1:
         raise SpecError("liquidity.gate must be in (0, 1]")
     return spec
+
+
+def _cma(d: Any, data: DataSpec) -> CMA:
+    """``cma: {version: placeholder}`` (synthetic truth, generated) or
+    ``cma: {version: <label>, vectors: [{effective: YYYY-MM, returns_annual: {asset: r}}]}``."""
+    d = _keys(d, "cma", required={"version"}, optional={"vectors"})
+    version = str(d["version"])
+    if version == PLACEHOLDER:
+        if data.source != "synthetic":
+            raise SpecError("cma.version placeholder needs data.source: synthetic")
+        cma = placeholder_cma(data.candidate, data.synthetic.mu_annual, data.start)
+        if "vectors" in d and _cma_vectors(d["vectors"]) != cma.vectors:
+            raise SpecError("cma: placeholder vectors are generated from the synthetic truth; "
+                            "remove 'vectors' or use another version name")  # fmt: skip
+        return cma
+    if "vectors" not in d:
+        raise SpecError(f"cma.version {version!r}: only 'placeholder' resolves by name until the "
+                        "PostgreSQL source exists (P2-M8); give vectors inline")  # fmt: skip
+    try:
+        return CMA(version, _cma_vectors(d["vectors"]))
+    except SpecError:
+        raise
+    except (ValueError, TypeError) as e:
+        raise SpecError(f"cma: {e}") from None
+
+
+def _cma_vectors(raw: Any) -> tuple[CMAVector, ...]:
+    out = []
+    for i, v in enumerate(_list(raw, "cma.vectors")):
+        v = _keys(v, f"cma.vectors[{i}]", required={"effective", "returns_annual"})
+        r = v["returns_annual"]
+        if not isinstance(r, dict) or not r:
+            raise SpecError(f"cma.vectors[{i}].returns_annual: expected a non-empty mapping")
+        out.append(CMAVector(_period_str(v["effective"]), {str(k): x for k, x in r.items()}))
+    return tuple(out)
 
 
 def _backtest(d: Any) -> BacktestSpec:

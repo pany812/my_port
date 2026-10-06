@@ -83,7 +83,10 @@ post-check on sample moments; `rest: saa` default; CVaR/CDaR realised shares dis
 - Downside lenses (`MSV`, `FLPM`, `SLPM`) and denoising estimators (`fixed`, `spectral`,
   `shrink`, detoning), verified in both libraries where both exist.
 
-**P2-M4 Return assumptions and Black–Litterman.**
+**P2-M4 Return assumptions and Black–Litterman.** *Built 2026-10-06* (CMA as an estimator,
+`method_mu: cma`; dated vectors used point in time and hashed resolved; own BL posterior in both
+libraries, skfolio twin via its native `BlackLitterman`; BL changes mu only, MV only; prior
+strength as an SAA Sharpe; view mode and breakeven mode with per-date root-finding).
 - `cma:` in the spec: a versioned expected-return vector (annual, converted in `units`) passed
   as `mu_override`, which already exists end to end. Its version goes into the provenance.
 - `riskfolio_bl` allocator with the SAA as the prior, plus a view sweep on the candidate's
@@ -146,7 +149,7 @@ Still open from Phase 1:
 
 New for Phase 2:
 6. Transaction-cost assumptions per building block (bps, one-way). Is there a house table?
-7. House CMAs: source, horizon, update cadence and versioning.
+7. House CMAs: source, horizon, update cadence and versioning; arithmetic (expected annual return, assumed now) or geometric (needs a variance-drag adjustment).
 8. Factor panel: which factors, source table and history length.
 9. IC memo: house template, and who sets the kill criteria.
 10. Statistical conventions: significance level, block-length rule, and whether PBO/DSR are

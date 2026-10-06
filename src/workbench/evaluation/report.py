@@ -10,12 +10,19 @@ from pathlib import Path
 
 import pandas as pd
 
+from workbench.data.cma import PLACEHOLDER
 from workbench.evaluation.agreement import agreement_summary, paired_cells
 from workbench.evaluation.corridor import FAILED_STATUSES, corridor
 from workbench.evaluation.expost import cell_label, expost_table
 from workbench.evaluation.markdown import md_table, num, pct
 from workbench.evaluation.oos import oos_table
-from workbench.evaluation.views import risk_budget_view, sweep_view
+from workbench.evaluation.views import (
+    BL_SETTINGS,
+    breakeven_view,
+    risk_budget_view,
+    sweep_view,
+    weight_by_view,
+)
 from workbench.grid.spec import ExperimentSpec, parse_spec
 from workbench.registry.store import Registry
 
@@ -111,12 +118,14 @@ def _summary(registry, exp, spec: ExperimentSpec, corr, expost, oos, min_oos) ->
     variants = sorted(cells["data_variant"].unique())
     lines = [f"# {exp['name']}", ""]
     lines += _provenance(exp, spec)
+    lines += _cma_section(spec)
     lines += ["## Cells", "", _status_table(cells), ""]
     lines += _corridor_section(corr, spec)
     lines += _group_views(registry, exp["experiment_id"])
     lines += _failures(cells)
     lines += _agreement_section(registry, exp["experiment_id"])
     lines += _risk_budget_section(registry, exp["experiment_id"])
+    lines += _breakeven_section(registry, exp["experiment_id"])
     lines += _sweep_section(registry, exp["experiment_id"])
     lines += _oos_section(oos, spec, min_oos)
     lines += _evidence_section(registry, exp["experiment_id"], min_oos)
@@ -153,10 +162,38 @@ def _provenance(exp, spec: ExperimentSpec) -> list[str]:
                 ),
             ),  # fmt: skip
             ("risk lenses", ", ".join(spec.risk_lenses)),
+            *_cma_provenance(spec),
         ],
         columns=["field", "value"],
     )
     return ["## Provenance", "", md_table(rows), ""]
+
+
+def _cma_provenance(spec: ExperimentSpec) -> list[tuple[str, str]]:
+    if spec.cma is None:
+        return []
+    c = spec.cma
+    note = " (synthetic truth: an oracle, for testing)" if c.version == PLACEHOLDER else ""
+    return [("CMA", f"{c.version}: {len(c.vectors)} vector(s) from {c.vectors[0].effective}"
+                    f"{note}")]  # fmt: skip
+
+
+MAX_CMA_COLUMNS = 6
+
+
+def _cma_section(spec: ExperimentSpec) -> list[str]:
+    if spec.cma is None:
+        return []
+    vectors = spec.cma.vectors[-MAX_CMA_COLUMNS:]
+    t = pd.DataFrame({f"from {v.effective}": pd.Series(v.returns_annual) for v in vectors})
+    t = t.rename_axis("asset").reset_index()
+    shown = "" if len(vectors) == len(spec.cma.vectors) else (
+        f" Showing the latest {len(vectors)} of {len(spec.cma.vectors)} vectors.")  # fmt: skip
+    return ["## Return assumptions (CMA)", "",
+            f"Expected annual total returns used by `method_mu: cma` cells, version "
+            f"`{spec.cma.version}`. Point in time: each fit uses the latest vector effective on or "
+            f"before its date.{shown}", "",
+            md_table(t, {c: _P for c in t.columns if c != "asset"}), ""]  # fmt: skip
 
 
 def _status_table(cells: pd.DataFrame) -> str:
@@ -256,6 +293,70 @@ def _risk_budget_section(registry: Registry, experiment_id: str) -> list[str]:
                             "realised_share_median", "target_share")}  # fmt: skip
     fmt |= {"n_cells": num(0), "n_ok": num(0)}
     return lines + [md_table(v, fmt), ""]
+
+
+def _settings_note(t: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+    """Drop BL settings that are constant across rows and name them in a sentence instead."""
+    const = {k: t[k].iloc[0] for k in BL_SETTINGS if t[k].nunique(dropna=False) == 1}
+    names = {"obj": "objective", "prior_sharpe": "prior SAA Sharpe", "method_cov": "covariance"}
+    txt = ", ".join(f"{names[k]} {v:.2f}" if isinstance(v, float) else f"{names[k]} {v}"
+                    for k, v in const.items())  # fmt: skip
+    return t.drop(columns=list(const)), (f"Settings: {txt}." if txt else "")
+
+
+def _breakeven_section(registry: Registry, experiment_id: str) -> list[str]:
+    be = breakeven_view(registry, experiment_id)
+    bv = weight_by_view(registry, experiment_id)
+    if be.empty and bv.empty:
+        return []
+    lines = ["## What would it have to earn? (Black–Litterman breakeven)", "",
+             "Prior: the SAA's equilibrium, i.e. the excess returns that make the SAA optimal, "
+             "scaled by an assumed SAA Sharpe ratio. Returns are expected excess returns over rf, "
+             "p.a. `excess` is what the candidate must be expected to earn (posterior, full "
+             "confidence) for the optimiser to give it the target weight, over rebalance dates; "
+             "`equilibrium` is what the prior already implies; `premium` is the difference; "
+             "`sharpe` is the required Sharpe ratio and `sharpe_unconstrained` its closed form "
+             "without policy limits, SR_SAA × (ρ + (σ_c/σ_SAA)·x/(1−x)). At confidence k a stated "
+             "view must be equilibrium + premium / k. Unreachable targets (a band, cap or TE "
+             "that stops the candidate first) are counted, not dropped. Mean-variance favours "
+             "low-correlation assets: small premiums buy large weights, so read this next to the "
+             "evidence sections.", ""]  # fmt: skip
+    if not be.empty:
+        t, note = _settings_note(be)
+        fmt = {
+            c: _P2
+            for c in (
+                "target_weight",
+                "excess_median",
+                "excess_p25",
+                "excess_p75",
+                "equilibrium_median",
+                "premium_median",
+                "excess_latest",
+            )
+        }
+        fmt |= {"sharpe_median": num(2), "sharpe_unconstrained_median": num(2),
+                "n_cells": num(0), "n_reached": num(0), "n_unreachable": num(0)}  # fmt: skip
+        lines += ["### Breakeven per target weight", ""] + ([note, ""] if note else [])
+        lines += [md_table(t, fmt), ""]
+    if not bv.empty:
+        t, note = _settings_note(bv)
+        fmt = {
+            c: _P2
+            for c in (
+                "view_annual",
+                "weight_median",
+                "weight_p25",
+                "weight_p75",
+                "weight_latest",
+                "equilibrium_median",
+                "posterior_median",
+            )
+        }
+        fmt |= {"confidence": num(2), "n_cells": num(0), "n_ok": num(0)}
+        lines += ["### Weight at a stated view", ""] + ([note, ""] if note else [])
+        lines += [md_table(t, fmt), ""]
+    return lines
 
 
 def _sweep_section(registry: Registry, experiment_id: str) -> list[str]:
@@ -447,7 +548,12 @@ def _definitions(spec: ExperimentSpec) -> list[str]:
         "- Policy TE limits are enforced with Riskfolio-Lib's definition (RMS of active returns, "
         "not demeaned) on each fitting window.",
         "- Failure policy: until the first successful fit the path holds the SAA; afterwards a "
-        "failed rebalance keeps the drifted weights. No transaction costs.",
+        "failed rebalance keeps the drifted weights. "
+        + (
+            "Transaction costs: see Frictions."
+            if spec.costs is not None
+            else "No transaction costs."
+        ),
         f"- Generated {dt.datetime.now(dt.UTC):%Y-%m-%d %H:%M} UTC from the registry.",
         "",
     ]

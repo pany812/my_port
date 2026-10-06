@@ -11,7 +11,12 @@ from skfolio.optimization import MeanRisk
 from workbench.allocators import _skfolio_map as sk
 from workbench.allocators._solve import Infeasible, guarded_fit
 from workbench.allocators.base import AllocationResult, FitContext
-from workbench.policy.skfolio import linear_infeasibility, mean_risk_kwargs, tracking_target
+from workbench.policy.skfolio import (
+    linear_infeasibility,
+    mean_risk_kwargs,
+    sharpe_undefined,
+    tracking_target,
+)
 
 
 @dataclass(frozen=True)
@@ -61,6 +66,9 @@ class SkfolioMeanRisk:
                     errors.append(f"{solver}: {e}")
             diag["solver_errors"] = errors
             reason = linear_infeasibility(c.policy, assets)
+            if not reason and self.obj == "Sharpe":
+                mu = base["prior_estimator"].fit(r).return_distribution_.mu
+                reason = sharpe_undefined(c.policy, pd.Series(mu, index=assets), r)
             if reason:
                 raise Infeasible(reason)
             raise cp.error.SolverError("; ".join(errors))

@@ -12,13 +12,16 @@ skfolio raises the same ``SolverError`` for infeasible and numerically failed pr
 
 from __future__ import annotations
 
+import math
 import re
 
+import cvxpy as cp
 import numpy as np
 import pandas as pd
 from scipy.optimize import linprog
 
 from workbench.policy.compiled import LINEAR_TOL, CompiledPolicy
+from workbench.units import return_period_to_annual
 
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -120,6 +123,66 @@ def linear_infeasibility(policy: CompiledPolicy, assets: list[str]) -> str | Non
     if res.status == 2:
         return "linear constraints (bounds, band, class limits, budget) are infeasible"
     return None
+
+
+EXCESS_TOL = 1e-10  # per period: a best expected excess return below this counts as none
+
+
+def _policy_constraints(policy: CompiledPolicy, returns: pd.DataFrame, w: cp.Variable) -> list:
+    """Budget, bounds (with the band box), class limits and the TE limit as cvxpy constraints.
+
+    Risk caps are left out, so problems built on these are relaxations (upper bounds).
+    """
+    assets = list(returns.columns)
+    lo, hi = policy.box_bounds(assets)
+    cons = [cp.sum(w) == 1, w >= lo.to_numpy(), w <= hi.to_numpy()]
+    if policy.class_limits:
+        classes = policy.asset_class.reindex(assets).to_numpy()
+        for cls, (clo, chi) in policy.class_limits.items():
+            row = (classes == cls).astype(float)
+            cons += [row @ w >= clo, row @ w <= chi]
+    if policy.te is not None:
+        b = _bench_series(policy, assets).to_numpy()
+        r = returns.to_numpy()
+        cons.append(cp.norm(r @ (w - b)) / math.sqrt(len(r) - 1) <= policy.te)
+    return cons
+
+
+def _maximise(objective: np.ndarray, policy: CompiledPolicy, returns: pd.DataFrame):
+    """max objective'w over the relaxed policy set; None if it does not solve."""
+    w = cp.Variable(returns.shape[1])
+    prob = cp.Problem(cp.Maximize(objective @ w), _policy_constraints(policy, returns, w))
+    try:
+        prob.solve()
+    except cp.error.SolverError:
+        return None
+    return float(prob.value) if prob.status in ("optimal", "optimal_inaccurate") else None
+
+
+def sharpe_undefined(policy: CompiledPolicy, mu: pd.Series, returns: pd.DataFrame) -> str | None:
+    """Why max-Sharpe has no solution, or None.
+
+    Max-Sharpe needs a feasible portfolio with a positive expected excess return over rf. This
+    maximises (mu - rf)'w over budget, bounds, band, class limits and the TE limit (Riskfolio's
+    non-demeaned definition); risk caps are left out, so it is an upper bound. Both libraries
+    fail differently when it is <= 0 (Riskfolio: no solution; skfolio: SolverError), so both
+    allocators use this to record the same ``infeasible`` reason. ``mu`` per period.
+    """
+    excess = mu.reindex(returns.columns).to_numpy(dtype=float) - policy.rf
+    best = _maximise(excess, policy, returns)
+    if best is None or best > EXCESS_TOL:
+        return None
+    best_annual = return_period_to_annual(best, policy.freq, "arithmetic")
+    return ("max-Sharpe undefined: no feasible portfolio has a positive expected excess return "
+            f"over rf (best {best_annual:.2%} p.a.)")  # fmt: skip
+
+
+def max_candidate_weight(policy: CompiledPolicy, returns: pd.DataFrame, candidate: str) -> float:
+    """The largest candidate weight the policy allows (bounds, band, class limits, TE; risk caps
+    left out, so an upper bound). 1.0 if the relaxation does not solve."""
+    e = (returns.columns == candidate).astype(float)
+    best = _maximise(e, policy, returns)
+    return 1.0 if best is None else best
 
 
 def _linear_breaches(policy: CompiledPolicy, assets: list[str], w: pd.Series) -> bool:

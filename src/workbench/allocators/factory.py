@@ -6,9 +6,11 @@ from dataclasses import fields
 
 from workbench.allocators.base import Allocator
 from workbench.allocators.naive import EqualWeight, InverseVol, SAAPlus, StaticSAA
+from workbench.allocators.riskfolio_bl import RiskfolioBlackLitterman
 from workbench.allocators.riskfolio_hc import RiskfolioHC
 from workbench.allocators.riskfolio_mr import RiskfolioMeanRisk
 from workbench.allocators.riskfolio_rb import RiskfolioRiskBudget
+from workbench.allocators.skfolio_bl import SkfolioBlackLitterman
 from workbench.allocators.skfolio_hc import SkfolioHC
 from workbench.allocators.skfolio_mr import SkfolioMeanRisk
 from workbench.allocators.skfolio_rb import SkfolioRiskBudget
@@ -24,6 +26,8 @@ ALLOCATOR_TYPES: dict[str, type] = {
     "skfolio_hc": SkfolioHC,
     "riskfolio_risk_budget": RiskfolioRiskBudget,
     "skfolio_risk_budget": SkfolioRiskBudget,
+    "riskfolio_bl": RiskfolioBlackLitterman,
+    "skfolio_bl": SkfolioBlackLitterman,
 }
 
 ESTIMATOR_KEYS = ("method_mu", "method_cov")
@@ -36,8 +40,11 @@ def uses_estimator(type_: str) -> bool:
 
 
 def allowed_params(type_: str) -> set[str]:
-    """Parameters a spec may set for ``type_`` (estimator keys come from ``grid.estimators``)."""
-    return {f.name for f in fields(_cls(type_))} - set(ESTIMATOR_KEYS)
+    """Parameters a spec may set for ``type_``. Estimator keys come from ``grid.estimators`` for
+    allocators that take both; an allocator with only ``method_cov`` (Black–Litterman) sets it
+    as an ordinary parameter."""
+    names = {f.name for f in fields(_cls(type_))}
+    return names - set(ESTIMATOR_KEYS) if uses_estimator(type_) else names
 
 
 def build(type_: str, params: dict, estimator: dict | None = None) -> Allocator:

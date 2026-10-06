@@ -20,20 +20,14 @@ import numpy as np
 import pandas as pd
 import riskfolio as rp
 
-from workbench.allocators._estimates import as_real
+from workbench.allocators._estimates import covariance
+
+__all__ = ["BUDGET_FLOOR", "RESTS", "contributions", "covariance", "realised_share",
+           "risk_budget"]  # fmt: skip
 
 BUDGET_FLOOR = 0.01  # minimum fraction of the non-candidate budget per asset
 RESTS = ("saa", "equal")
 ALPHA = 0.05
-
-
-def covariance(returns: pd.DataFrame, method_cov: str) -> pd.DataFrame:
-    """Riskfolio covariance estimate (per period), real-valued."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        cov = rp.ParamsEstimation.covar_matrix(returns, method=method_cov)
-    cov, _ = as_real(pd.DataFrame(cov, index=returns.columns, columns=returns.columns), "cov")
-    return cov
 
 
 def contributions(
