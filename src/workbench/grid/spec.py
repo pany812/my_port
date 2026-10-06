@@ -22,6 +22,7 @@ import yaml
 from workbench.allocators._estimates import CMA_MU
 from workbench.allocators.factory import allowed_params, uses_estimator
 from workbench.data.cma import CMA, PLACEHOLDER, CMAVector, placeholder_cma
+from workbench.evaluation.stress import PRESET_WINDOWS, window_bounds
 from workbench.policy.compiler import ConstraintSet
 from workbench.units import periods_per_year
 
@@ -101,6 +102,28 @@ class LiquiditySpec:
 
 
 @dataclass(frozen=True)
+class StressSpec:
+    """Stress section (P2-M5). windows: (name, start, end), inclusive ("YYYY-MM" or ISO dates);
+    weights: candidate weights (decimal) stressed besides the SAA and the corridor's P25 / median
+    / P75; bootstrap: ``n_paths`` paths of ``horizon_years``, mean block length ``block`` periods
+    (None = ceil(T^(1/3)), the Sharpe-test rule)."""
+
+    windows: tuple[tuple[str, str, str], ...]
+    weights: tuple[float, ...] = ()
+    n_paths: int = 2000
+    horizon_years: int = 10
+    block: int | None = None
+
+    def canonical(self) -> dict[str, Any]:
+        return {
+            "windows": {name: [start, end] for name, start, end in self.windows},
+            "weights": list(self.weights),
+            "bootstrap": {"n_paths": self.n_paths, "horizon_years": self.horizon_years,
+                          "block": self.block},
+        }  # fmt: skip
+
+
+@dataclass(frozen=True)
 class BacktestSpec:
     """walk_forward: fit at every rebalance date, out-of-sample path (default).
     in_sample: a single fit at the end of the data, no path. ``start``: first rebalance date."""
@@ -134,6 +157,7 @@ class ExperimentSpec:
     costs: CostsSpec | None = None
     liquidity: LiquiditySpec | None = None
     cma: CMA | None = None
+    stress: StressSpec | None = None
     rf_annual: float = 0.0
     solvers: tuple[str, ...] = ("CLARABEL",)
     source_text: str | None = None  # raw YAML as written; stored in the registry, not hashed
@@ -141,9 +165,10 @@ class ExperimentSpec:
     def canonical(self) -> dict[str, Any]:
         """Normalised, JSON-serialisable form with every default filled in (no name, no text).
 
-        Optional sections added after Phase 1 (costs, liquidity, rebalance.band, cma) enter only
-        when set, so specs that do not use them keep their spec_hash. The CMA enters resolved
-        (every vector's values), so changing a CMA changes the hash even under the same version.
+        Optional sections added after Phase 1 (costs, liquidity, rebalance.band, cma, stress)
+        enter only when set, so specs that do not use them keep their spec_hash. The CMA and the
+        stress windows enter resolved (every vector's values, the preset's dates), so changing
+        them changes the hash even under the same name.
         """
         rebalance = asdict(self.rebalance)
         if rebalance["band"] is None:
@@ -171,6 +196,8 @@ class ExperimentSpec:
             out["liquidity"] = asdict(self.liquidity)
         if self.cma is not None:
             out["cma"] = self.cma.canonical()
+        if self.stress is not None:
+            out["stress"] = self.stress.canonical()
         return out
 
     @property
@@ -215,6 +242,7 @@ def parse_spec(src: str | dict) -> ExperimentSpec:
             "costs",
             "liquidity",
             "cma",
+            "stress",
         },
     )
     data = _data(top["data"])
@@ -250,6 +278,7 @@ def parse_spec(src: str | dict) -> ExperimentSpec:
         costs=_costs(top["costs"]) if "costs" in top else None,
         liquidity=_liquidity(top["liquidity"], data.frequency) if "liquidity" in top else None,
         cma=cma,
+        stress=_stress(top["stress"]) if "stress" in top else None,
         estimators=estimators,
         allocators=allocators,
         constraint_sets=constraint_sets,
@@ -371,6 +400,52 @@ def _cma(d: Any, data: DataSpec) -> CMA:
         raise
     except (ValueError, TypeError) as e:
         raise SpecError(f"cma: {e}") from None
+
+
+_WINDOW_NAME = re.compile(r"^[A-Za-z0-9_]{1,24}$")
+
+
+def _stress(d: Any) -> StressSpec:
+    """``stress: {windows: default | {name: [start, end]}, weights: [...], bootstrap: {...}}``.
+    ``windows: default`` (or omitted) is the preset (GFC, COVID, 2022)."""
+    d = _keys(d, "stress", optional={"windows", "weights", "bootstrap"})
+    raw = d.get("windows", "default")
+    if raw == "default":
+        windows = tuple((name, start, end) for name, (start, end) in PRESET_WINDOWS.items())
+    elif isinstance(raw, dict) and raw:
+        out = []
+        for name, v in raw.items():
+            if not _WINDOW_NAME.match(str(name)):
+                raise SpecError(f"stress.windows: name {name!r} must be 1-24 letters, digits or _")
+            if not (isinstance(v, list) and len(v) == 2):
+                raise SpecError(f"stress.windows.{name}: expected [start, end]")
+            start, end = _period_str(v[0]), _period_str(v[1])
+            try:
+                lo, hi = window_bounds(start, end)
+            except ValueError as e:
+                raise SpecError(f"stress.windows.{name}: {e}") from None
+            if lo > hi:
+                raise SpecError(f"stress.windows.{name}: start {start} is after end {end}")
+            out.append((str(name), start, end))
+        windows = tuple(out)
+    else:
+        raise SpecError("stress.windows must be 'default' or a non-empty mapping "
+                        "name: [start, end]")  # fmt: skip
+    weights = d.get("weights", [])
+    if not isinstance(weights, list) or not all(
+        isinstance(x, int | float) and not isinstance(x, bool) and 0 < x < 1 for x in weights
+    ):
+        raise SpecError("stress.weights must be a list of candidate weights in (0, 1)")
+    b = _keys(d.get("bootstrap", {}), "stress.bootstrap",
+              optional={"n_paths", "horizon_years", "block"})  # fmt: skip
+    spec = StressSpec(windows, tuple(float(x) for x in weights), **b)
+    if not isinstance(spec.n_paths, int) or spec.n_paths < 100:
+        raise SpecError("stress.bootstrap.n_paths must be an integer >= 100")
+    if not isinstance(spec.horizon_years, int) or spec.horizon_years < 1:
+        raise SpecError("stress.bootstrap.horizon_years must be an integer >= 1")
+    if spec.block is not None and (not isinstance(spec.block, int) or spec.block < 1):
+        raise SpecError("stress.bootstrap.block must be null or an integer >= 1")
+    return spec
 
 
 def _cma_vectors(raw: Any) -> tuple[CMAVector, ...]:

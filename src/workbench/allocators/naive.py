@@ -55,34 +55,40 @@ class SAAPlus:
 
     def fit(self, returns: pd.DataFrame, ctx: FitContext) -> AllocationResult:
         def impl(r, c, d):
-            if self.funding == "pro_rata":
-                w = (1.0 - self.x) * c.saa.reindex(r.columns)
-                w[c.candidate] += self.x
-                return w
-            w = c.saa.reindex(r.columns).astype(float).copy()
-            kind, _, name = self.funding.partition(":")
-            if kind == "asset":
-                if name not in w.index or name == c.candidate:
-                    raise ValueError(f"funding asset {name!r} is not a building block")
-                source = [name]
-            else:
-                classes = c.policy.asset_class
-                if classes is None:
-                    raise ValueError("class funding needs asset classes in the policy")
-                source = [a for a in w.index if a != c.candidate and classes.get(a) == name]
-                if not source:
-                    raise ValueError(f"funding class {name!r} has no building blocks")
-            available = float(w[source].sum())
-            if available < self.x - 1e-12:
-                raise Infeasible(
-                    f"funding source exhausted: {self.funding} holds {available:.4%} "
-                    f"< x {self.x:.4%}"
-                )
-            w[source] -= self.x * w[source] / available
-            w[c.candidate] += self.x
-            return w
+            return funded_weights(c.saa.reindex(r.columns), c.candidate, self.x, self.funding,
+                                  c.policy.asset_class)  # fmt: skip
 
         return guarded_fit(impl, returns, ctx)
+
+
+def funded_weights(
+    saa: pd.Series, candidate: str, x: float, funding: str, asset_class: pd.Series | None
+) -> pd.Series:
+    """SAA plus the candidate at weight ``x`` (decimal), funded per ``funding`` (see
+    ``SAAPlus``). Raises ``Infeasible`` when the source holds less than ``x``. Shared by
+    ``saa_plus`` and the stress section's policy portfolios."""
+    if funding == "pro_rata":
+        w = (1.0 - x) * saa
+        w[candidate] += x
+        return w
+    w = saa.astype(float).copy()
+    kind, _, name = funding.partition(":")
+    if kind == "asset":
+        if name not in w.index or name == candidate:
+            raise ValueError(f"funding asset {name!r} is not a building block")
+        source = [name]
+    else:
+        if asset_class is None:
+            raise ValueError("class funding needs asset classes in the policy")
+        source = [a for a in w.index if a != candidate and asset_class.get(a) == name]
+        if not source:
+            raise ValueError(f"funding class {name!r} has no building blocks")
+    available = float(w[source].sum())
+    if available < x - 1e-12:
+        raise Infeasible(f"funding source exhausted: {funding} holds {available:.4%} < x {x:.4%}")
+    w[source] -= x * w[source] / available
+    w[candidate] += x
+    return w
 
 
 @dataclass(frozen=True)

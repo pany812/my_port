@@ -29,7 +29,7 @@ uv run wb report synthetic_trend_v1       # rebuild the report from the registry
 | `corridor.csv` | corridor per data variant × rebalance date × measure (counts by status, P10–P90, share below 0.25%) |
 | `oos.csv` | walk-forward out-of-sample statistics per configuration vs the SAA path |
 | `expost.csv` | in-sample statistics per cell and rebalance date (diagnostic only) |
-| `summary.md` | provenance (and CMA), cell counts, corridor (latest and through time), group-by views, failures, library agreement, risk budgets, **Black–Litterman breakeven**, constraint sweeps, OOS vs SAA, **evidence net of search** (Sharpe test vs SAA with BH-adjusted p, deflated Sharpe, PBO, spanning), live-only variant, definitions |
+| `summary.md` | provenance (and CMA), cell counts, corridor (latest and through time), group-by views, failures, library agreement, risk budgets, **Black–Litterman breakeven**, constraint sweeps, OOS vs SAA, **evidence net of search** (Sharpe test vs SAA with BH-adjusted p, deflated Sharpe, PBO, spanning), **stress** (crisis windows, bootstrap paths), live-only variant, definitions |
 
 If a registry was created by an older version, `wb` refuses to write to it and asks for
 `wb migrate`, which adds the new columns and backfills them exactly (older experiments had no
@@ -99,6 +99,10 @@ grid:
        min_return_annual: 0.02, candidate_max_risk_share: 0.10}
 risk_lenses: [MV, CVaR, CDaR]        # lenses for the candidate's risk share
 solvers: [CLARABEL]
+stress:                              # optional: crisis windows and bootstrap paths (see below)
+  windows: default                   # or {gfc: [2007-11, 2009-02], ...}
+  weights: [0.05]
+  bootstrap: {n_paths: 2000, horizon_years: 10, block: null}
 ```
 
 **Frictions (optional).** `costs` are charged on every trade (the SAA path pays them too) and all
@@ -165,6 +169,17 @@ target, e.g. above a band, is `infeasible` and counted). `obj: Sharpe | Utility`
 a parameter; mean-variance only. The report adds "What would it have to earn?" with the required
 excess return, the equilibrium, the premium, the required Sharpe and the unconstrained closed
 form. See `specs/example_black_litterman.yaml`.
+
+**Stress (optional).** `stress:` stresses the SAA and the SAA plus the candidate at the
+corridor's P25 / median / P75 (latest date, full variant) and at any listed `weights`, funded per
+`funding`, as fixed weights rebalanced every period. Crisis `windows` (`default`: GFC
+2007-11..2009-02, COVID 2020-02..2020-03, rates 2022-01..2022-09) are evaluated on these policy
+portfolios and on the stored walk-forward paths (when the window lies in the out-of-sample
+period). The bootstrap draws `n_paths` stationary block-bootstrap paths of `horizon_years` from
+each variant's history (mean block ceil(T^(1/3)) unless `block` is set), the same paths for every
+weight, and reports max drawdown, CDaR, CVaR, return and volatility, paired with the SAA. Results
+are disclosures stored in `evidence`. On synthetic data the windows carry no real crisis. See
+`specs/example_stress.yaml`.
 
 **Two libraries.** `skfolio_mean_risk` and `skfolio_hc` take the same parameters as their
 `riskfolio_*` twins (estimator names in Riskfolio vocabulary; unmapped names are recorded as

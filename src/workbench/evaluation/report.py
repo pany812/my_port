@@ -16,6 +16,7 @@ from workbench.evaluation.corridor import FAILED_STATUSES, corridor
 from workbench.evaluation.expost import cell_label, expost_table
 from workbench.evaluation.markdown import md_table, num, pct
 from workbench.evaluation.oos import oos_table
+from workbench.evaluation.stress import bootstrap_table, path_window_view, window_table
 from workbench.evaluation.views import (
     BL_SETTINGS,
     breakeven_view,
@@ -129,6 +130,7 @@ def _summary(registry, exp, spec: ExperimentSpec, corr, expost, oos, min_oos) ->
     lines += _sweep_section(registry, exp["experiment_id"])
     lines += _oos_section(oos, spec, min_oos)
     lines += _evidence_section(registry, exp["experiment_id"], min_oos)
+    lines += _stress_section(registry, exp["experiment_id"], spec)
     lines += _expost_section(expost)
     lines += _live_only_note(variants, corr)
     lines += _definitions(spec)
@@ -487,6 +489,62 @@ def _evidence_section(registry: Registry, experiment_id: str, min_oos: int) -> l
                       "this variant; low power on short histories):", "",
                       md_table(st, {"statistic": num(3), "p_value": num(3),
                                     "alpha_ann": pct(2)}), ""]  # fmt: skip
+    return lines
+
+
+def _stress_section(registry: Registry, experiment_id: str, spec: ExperimentSpec) -> list[str]:
+    st = spec.stress
+    if st is None:
+        return []
+    ev = registry.evidence(experiment_id)
+    lines = ["## Stress", "",
+             "Disclosures. Policy portfolios are the SAA and the SAA plus the candidate at weight "
+             "`x` (the corridor's P25 / median / P75 at the latest date of the full variant, and "
+             f"any weights in the spec), funded `{spec.funding}`, fixed weights rebalanced every "
+             "period, no costs. `d_*` are changes vs the SAA (positive `d_max_dd` = a deeper "
+             "drawdown). Drawdowns are of compounded wealth.", ""]  # fmt: skip
+    if spec.data.source == "synthetic":
+        lines += ["> Synthetic data: these dates carry no real crisis; the windows exercise the "
+                  "machinery only.", ""]  # fmt: skip
+    wt = window_table(ev, [name for name, _, _ in st.windows])
+    if not wt.empty:
+        fmt = {c: _P2 for c in ("backfilled_share", "x", "return", "d_return", "max_dd",
+                                "d_max_dd", "candidate_return")}  # fmt: skip
+        fmt["n_periods"] = num(0)
+        lines += ["### Crisis windows: SAA plus the candidate", "",
+                  "Wealth starts at 1 at the window start; `candidate_return` is the candidate's "
+                  "own return over the window; `backfilled_share` the share of its observations "
+                  "in the window that are backfilled.", "",
+                  md_table(wt, fmt), ""]  # fmt: skip
+    pv = path_window_view(registry, experiment_id, st.windows)
+    if not pv.empty:
+        fmt = {c: _P2 for c in pv.columns if c.startswith(("saa_", "d_"))}
+        fmt |= {"n_periods": num(0), "n_configs": num(0)}
+        lines += ["### Crisis windows: walk-forward paths", "",
+                  "Every configuration's out-of-sample path (net returns) minus the SAA path over "
+                  "the same dates: median and P10–P90 across configurations.", "",
+                  md_table(pv, fmt), ""]  # fmt: skip
+    bt = bootstrap_table(ev)
+    if not bt.empty:
+        meta = bt.iloc[0]
+        per_variant = "; ".join(
+            f"{v}: {int(g['n_obs'].iloc[0])} periods of history, mean block "
+            f"{g['mean_block'].iloc[0]:g}" for v, g in bt.groupby("data_variant", sort=True)
+        )  # fmt: skip
+        cols = [c for c in bt.columns if c not in ("n_paths", "horizon_years", "mean_block",
+                                                   "n_obs", "backfilled_share")]  # fmt: skip
+        fmt = {c: _P2 for c in cols if c.startswith(("x", "max_dd", "cdar", "cvar", "ann_",
+                                                     "d_max_dd"))}  # fmt: skip
+        fmt["p_worse_max_dd"] = pct(0)
+        lines += ["### Block-bootstrap paths", "",
+                  f"{int(meta['n_paths']):,} stationary block-bootstrap paths of "
+                  f"{int(meta['horizon_years'])} years per variant ({per_variant}), the same "
+                  "paths for every weight. "
+                  "`p_worse_max_dd` = share of paths where the portfolio's max drawdown is deeper "
+                  "than the SAA's on the same path. The bootstrap replays history: no regime "
+                  "outside the sample, and in the full variant backfilled candidate "
+                  "observations are resampled too.", "",
+                  md_table(bt[cols], fmt), ""]  # fmt: skip
     return lines
 
 

@@ -93,6 +93,15 @@ tests/          pytest, synthetic fixtures only
   premium per date (bracket from the closed form, bisect to 1e-4 weight); a target above the
   policy's maximum feasible candidate weight, or needing a Sharpe > 3, is `infeasible`
   ("unreachable"). BL allocators take `method_cov` as a parameter, not from `grid.estimators`.
+- Stress (P2-M5, `evaluation/stress.py`) is disclosure, stored as `evidence` rows
+  (`stress_window:<name>`, `stress_bootstrap`; subject `x=<weight>`). Policy portfolios: the SAA
+  and SAA + candidate at the full variant's latest corridor P25/median/P75 plus spec weights,
+  funded per `funding` (`allocators.naive.funded_weights`, shared with `saa_plus`), rebalanced
+  every period, no costs. Crisis windows are inclusive ("YYYY-MM" ends at month end; wealth
+  starts at 1 at the window start) and also read off the stored walk-forward paths at report
+  time. Bootstrap: stationary (Politis–Romano) over whole rows, mean block ceil(T^(1/3)), seeded
+  per variant, the same paths for every weight (paired). Meaningful crisis results need real
+  data; synthetic reports say so.
 - Max-Sharpe with no feasible positive expected excess return over rf is undefined: both
   mean-risk allocators record `infeasible` with the reason (`policy.skfolio.sharpe_undefined`).
 - Evidence (P2-M1, `evaluation/inference.py`, `evaluation/evidence.py`) is disclosure, never a

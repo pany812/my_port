@@ -92,7 +92,11 @@ strength as an SAA Sharpe; view mode and breakeven mode with per-date root-findi
 - `riskfolio_bl` allocator with the SAA as the prior, plus a view sweep on the candidate's
   excess return. Report: allocation vs view, and the breakeven premium for a target weight.
 
-**P2-M5 Stress scenarios.**
+**P2-M5 Stress scenarios.** *Built 2026-10-06* (crisis windows built now and tested with an
+injected crash, meaningful on real data; policy portfolios at the corridor's P25/median/P75 plus
+spec weights; stationary block bootstrap with the Sharpe-test block rule; results in `evidence`,
+no schema change; vine copula deferred: ~10 s per fit and i.i.d. draws understate drawdown
+persistence).
 - Named crisis windows (2008, 2020, 2022) evaluated on stored paths: the candidate's
   contribution to SAA drawdowns in each window. **Data-gated**: synthetic data has no real
   crises.

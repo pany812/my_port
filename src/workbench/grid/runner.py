@@ -29,6 +29,7 @@ from workbench.data.base import MarketData
 from workbench.data.loaders import load_market
 from workbench.evaluation.evidence import path_evidence, spanning_evidence
 from workbench.evaluation.metrics import cell_metrics
+from workbench.evaluation.stress import corridor_quantiles, stress_evidence, stress_weights
 from workbench.grid.expand import CellConfig, expand
 from workbench.grid.spec import ExperimentSpec, SpecError, WindowSpec
 from workbench.policy.compiled import CompiledPolicy
@@ -139,6 +140,8 @@ def run_experiment(
         ev += spanning_evidence(returns, saa.candidate, freq, _riskless(saa))
         evidence_rows += [{"data_variant": variant, **r} for r in ev]
         log.info("variant %s done (%.1fs)", variant, time.perf_counter() - t0)
+    if spec.stress is not None:
+        evidence_rows += _stress_rows(ctx, data, records)
 
     registry.write_experiment(
         {
@@ -392,6 +395,21 @@ def _reference_cell(ctx: _Context, variant: str, window: pd.DataFrame) -> CellRe
     )
     _add_metrics(rec, window, ctx.saa, ctx.spec)
     return rec
+
+
+def _stress_rows(ctx: _Context, data: MarketData, records: list[CellRecord]) -> list[dict]:
+    """Stress evidence for every variant, at the full variant's corridor weights (P2-M5)."""
+    st, saa = ctx.spec.stress, ctx.saa
+    weights = stress_weights(corridor_quantiles(records, saa.candidate), st.weights)
+    rows = []
+    for variant, vdata in data_variants(data).items():
+        out = stress_evidence(
+            vdata.returns[saa.assets], vdata.backfilled, saa.weights, saa.candidate,
+            saa.asset_class, ctx.spec.funding, weights, st.windows, ctx.spec.data.frequency,
+            st.n_paths, st.horizon_years, st.block, ctx.spec.seed, variant,
+        )  # fmt: skip
+        rows += [{"data_variant": variant, **r} for r in out]
+    return rows
 
 
 def _riskless(saa: SAA) -> str | None:
