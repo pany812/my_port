@@ -23,8 +23,8 @@ from workbench.policy.compiled import LINEAR_TOL, CompiledPolicy
 _IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def mean_risk_kwargs(policy: CompiledPolicy, assets: list[str]) -> dict:
-    """Constraint arguments for ``skfolio.optimization.MeanRisk`` (per-period units)."""
+def linear_kwargs(policy: CompiledPolicy, assets: list[str]) -> dict:
+    """Per-asset bounds and class limits for skfolio estimators (MeanRisk, RiskBudgeting)."""
     if not policy.long_only:
         raise ValueError("the skfolio backend supports long-only policies only")
     lo, hi = policy.bounds(assets)
@@ -47,11 +47,30 @@ def mean_risk_kwargs(policy: CompiledPolicy, assets: list[str]) -> dict:
             if chi < 1:
                 cons.append(f"{cls} <= {chi!r}")
         kw["linear_constraints"] = cons
+    return kw
+
+
+def mean_risk_kwargs(policy: CompiledPolicy, assets: list[str]) -> dict:
+    """Constraint arguments for ``skfolio.optimization.MeanRisk`` (per-period units).
+
+    Risk caps map to ``max_standard_deviation``, ``max_cvar``, ``max_cdar`` and ``min_return``
+    (same definitions as Riskfolio, verified). skfolio has no risk-contribution constraint, so
+    the candidate risk-share cap is enforced by the post-check only.
+    """
+    kw = linear_kwargs(policy, assets)
     if policy.band is not None:
         kw["max_turnover"] = policy.band
         kw["previous_weights"] = _bench(policy, assets)
     if policy.te is not None:
         kw["max_tracking_error"] = policy.te
+    if policy.max_vol is not None:
+        kw["max_standard_deviation"] = policy.max_vol
+    if policy.max_cvar is not None:
+        kw["max_cvar"] = policy.max_cvar
+    if policy.max_cdar is not None:
+        kw["max_cdar"] = policy.max_cdar
+    if policy.min_return is not None:
+        kw["min_return"] = policy.min_return
     return kw
 
 

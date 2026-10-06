@@ -1,9 +1,12 @@
 """Spec names (Riskfolio-Lib vocabulary) -> skfolio 1.4.11 objects.
 
 Only names verified to match Riskfolio-Lib on synthetic data are mapped (October 2026):
-mu ``hist``/``JS`` and cov ``hist``/``ledoit``/``gerber1`` are numerically identical; Sharpe,
-MinRisk and Utility (``risk_aversion = l``) agree to solver tolerance; HRP is identical; HERC
-and NCO are identical once the cluster count matches (skfolio picks its own by default).
+mu ``hist``/``JS`` and cov ``hist``/``ledoit``/``gerber1``/``fixed`` (denoised) are numerically
+identical; Sharpe, MinRisk and Utility (``risk_aversion = l``) agree to solver tolerance; HRP is
+identical; HERC and NCO are identical once the cluster count matches (skfolio picks its own by
+default). Downside measures (P2-M3): ``MSV`` -> semi-deviation, ``FLPM`` -> first lower partial
+moment and ``SLPM`` -> semi-deviation, the last two with the policy rf as the minimum acceptable
+return (MinRisk weights agree to <= 3e-7).
 Anything else raises ``ValueError("... unsupported in the skfolio backend")``.
 """
 
@@ -16,6 +19,7 @@ from skfolio.cluster import HierarchicalClustering, LinkageMethod
 from skfolio.distance import KendallDistance, PearsonDistance, SpearmanDistance
 from skfolio.moments import (
     BaseMu,
+    DenoiseCovariance,
     EmpiricalCovariance,
     EmpiricalMu,
     GerberCovariance,
@@ -36,8 +40,16 @@ _COV = {
     "hist": lambda: EmpiricalCovariance(),
     "ledoit": lambda: LedoitWolf(),
     "gerber1": lambda: GerberCovariance(),
+    "fixed": lambda: DenoiseCovariance(),  # Riskfolio "fixed" = denoised sample covariance
 }
-_RISK = {"CVaR": RiskMeasure.CVAR, "CDaR": RiskMeasure.CDAR}
+_RISK = {
+    "CVaR": RiskMeasure.CVAR,
+    "CDaR": RiskMeasure.CDAR,
+    "MSV": RiskMeasure.SEMI_DEVIATION,
+    "FLPM": RiskMeasure.FIRST_LOWER_PARTIAL_MOMENT,
+    "SLPM": RiskMeasure.SEMI_DEVIATION,
+}
+_MAR_IS_RF = {"FLPM", "SLPM"}  # Riskfolio uses rf as the target return for these
 _OBJ = {
     "MinRisk": ObjectiveFunction.MINIMIZE_RISK,
     "Sharpe": ObjectiveFunction.MAXIMIZE_RATIO,
@@ -90,6 +102,11 @@ def risk_measure(rm: str, obj: str | None = None) -> RiskMeasure:
     if rm == "MV":
         return RiskMeasure.STANDARD_DEVIATION if obj == "Sharpe" else RiskMeasure.VARIANCE
     return _get(_RISK, rm, "rm")
+
+
+def mar_kwargs(rm: str, rf: float) -> dict:
+    """``min_acceptable_return`` for lower-partial-moment measures (rf per period), else {}."""
+    return {"min_acceptable_return": float(rf)} if rm in _MAR_IS_RF else {}
 
 
 def objective(obj: str) -> ObjectiveFunction:

@@ -70,7 +70,8 @@ liquidity by freeze-and-rescale; plus `wb migrate` for additive registry upgrade
 - Cost-aware optimisers need the current holdings, so `FitContext` would gain an optional
   `current_weights` field. That is a core-signature change; ask before making it.
 
-**P2-M3 Risk budgets, risk limits and sweeps.**
+**P2-M3 Risk budgets, risk limits and sweeps.** *Built 2026-10-05* (cap keys carry units;
+post-check on sample moments; `rest: saa` default; CVaR/CDaR realised shares disclosed).
 - Risk-budget allocators `riskfolio_risk_budget(candidate_share, rm)` and a skfolio
   `RiskBudgeting` twin. The realised share is checked with `rp.Risk_Contribution` because
   linear constraints can stop a budget from being met.

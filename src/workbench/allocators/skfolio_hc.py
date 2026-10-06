@@ -66,6 +66,7 @@ class SkfolioHC:
                     risk_free_rate=c.policy.rf,
                     cvar_beta=sk.BETA,
                     cdar_beta=sk.BETA,
+                    **sk.mar_kwargs(self.rm, c.policy.rf),
                 )
                 est = NestedClustersOptimization(
                     inner_estimator=inner,

@@ -111,4 +111,6 @@ def test_readme_spec_example_parses():
     readme = (Path(__file__).parents[1] / "README.md").read_text()
     block = readme.split("## How to write a spec")[1].split("```yaml")[1].split("```")[0]
     spec = parse_spec(block)
-    assert len(spec.constraint_sets) == 3 and spec.data.synthetic.backfill is True
+    names = [cs.name for cs in spec.constraint_sets]
+    assert len(names) == 7 and spec.data.synthetic.backfill is True  # te sweep -> 3 sets
+    assert "te[te_annual=0.005]" in names and "caps" in names

@@ -9,7 +9,7 @@ import pandas as pd
 
 from workbench.policy.compiled import CompiledPolicy
 from workbench.policy.saa import SAA
-from workbench.units import return_annual_to_period, te_annual_to_period
+from workbench.units import return_annual_to_period, te_annual_to_period, vol_annual_to_period
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,13 @@ class ConstraintSet:
     class_limits:  {class: [lo, hi]} on summed class weight (decimal).
     band:          per-asset band |w_i - saa_i| <= band (decimal weight).
     te_annual:     annual tracking-error limit vs the SAA (decimal).
+    max_vol_annual:    annual volatility cap (decimal).
+    max_cvar_period:   CVaR 95% cap, loss per return period (decimal); not annualised.
+    max_cdar:          CDaR 95% cap on uncompounded cumulative returns (decimal).
+    min_return_annual: floor on the annual arithmetic mean return (decimal).
+    candidate_max_risk_share: cap on the candidate's share of portfolio variance (decimal).
+    sweep:         set by the spec parser for sets expanded from ``{sweep: [...]}``:
+                   {"base": base name, "keys": {key: value}}. Metadata only: not hashed.
     """
 
     name: str
@@ -29,6 +36,12 @@ class ConstraintSet:
     class_limits: dict[str, tuple[float, float]] | None = None
     band: float | None = None
     te_annual: float | None = None
+    max_vol_annual: float | None = None
+    max_cvar_period: float | None = None
+    max_cdar: float | None = None
+    min_return_annual: float | None = None
+    candidate_max_risk_share: float | None = None
+    sweep: dict | None = None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ConstraintSet:
@@ -78,6 +91,13 @@ def compile_policy(
         unknown = set(cs.class_limits) - set(saa.asset_class)
         if unknown:
             raise ValueError(f"class_limits for unknown classes {sorted(unknown)}")
+    for key in ("max_vol_annual", "max_cvar_period", "max_cdar"):
+        value = getattr(cs, key)
+        if value is not None and value <= 0:
+            raise ValueError(f"{key} must be > 0, got {value}")
+    share = cs.candidate_max_risk_share
+    if share is not None and not 0 < share <= 1:
+        raise ValueError(f"candidate_max_risk_share must be in (0, 1], got {share}")
 
     return CompiledPolicy(
         name=cs.name,
@@ -91,4 +111,16 @@ def compile_policy(
         te=None if cs.te_annual is None else te_annual_to_period(cs.te_annual, freq),
         benchweights=saa.weights[assets].astype(float).copy(),
         solvers=tuple(solvers),
+        candidate=saa.candidate,
+        max_vol=_opt(cs.max_vol_annual, lambda v: vol_annual_to_period(v, freq)),
+        max_cvar=cs.max_cvar_period,
+        max_cdar=cs.max_cdar,
+        min_return=_opt(
+            cs.min_return_annual, lambda v: return_annual_to_period(v, freq, "arithmetic")
+        ),  # fmt: skip
+        max_candidate_risk_share=share,
     )
+
+
+def _opt(value, convert):
+    return None if value is None else convert(value)

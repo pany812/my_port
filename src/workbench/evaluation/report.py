@@ -15,6 +15,7 @@ from workbench.evaluation.corridor import FAILED_STATUSES, corridor
 from workbench.evaluation.expost import cell_label, expost_table
 from workbench.evaluation.markdown import md_table, num, pct
 from workbench.evaluation.oos import oos_table
+from workbench.evaluation.views import risk_budget_view, sweep_view
 from workbench.grid.spec import ExperimentSpec, parse_spec
 from workbench.registry.store import Registry
 
@@ -115,6 +116,8 @@ def _summary(registry, exp, spec: ExperimentSpec, corr, expost, oos, min_oos) ->
     lines += _group_views(registry, exp["experiment_id"])
     lines += _failures(cells)
     lines += _agreement_section(registry, exp["experiment_id"])
+    lines += _risk_budget_section(registry, exp["experiment_id"])
+    lines += _sweep_section(registry, exp["experiment_id"])
     lines += _oos_section(oos, spec, min_oos)
     lines += _evidence_section(registry, exp["experiment_id"], min_oos)
     lines += _expost_section(expost)
@@ -236,6 +239,41 @@ def _agreement_section(registry: Registry, experiment_id: str) -> list[str]:
     fmt = {"median_abs_diff": pct(3), "max_abs_diff": pct(3), "n_pairs": num(0),
            "n_status_mismatch": num(0)}  # fmt: skip
     return lines + [md_table(s, fmt), ""]
+
+
+def _risk_budget_section(registry: Registry, experiment_id: str) -> list[str]:
+    v = risk_budget_view(registry, experiment_id)
+    if v.empty:
+        return []
+    lines = ["## How much of our risk should it carry? (risk budgets)", "",
+             "Capital weight implied by giving the candidate a target share of risk under each "
+             "lens (all rebalance dates; `latest` = latest date). Realised shares are exact for "
+             "smooth measures (MV, MSV); for CVaR/CDaR on historical scenarios risk "
+             "contributions are not unique, so the realised share differs from the target even "
+             "at the optimum, and on short windows (few tail scenarios) different targets can "
+             "give nearly the same weight.", ""]  # fmt: skip
+    fmt = {c: _P2 for c in ("weight_median", "weight_p25", "weight_p75", "weight_latest",
+                            "realised_share_median", "target_share")}  # fmt: skip
+    fmt |= {"n_cells": num(0), "n_ok": num(0)}
+    return lines + [md_table(v, fmt), ""]
+
+
+def _sweep_section(registry: Registry, experiment_id: str) -> list[str]:
+    v = sweep_view(registry, experiment_id)
+    if v.empty:
+        return []
+    lines = ["## Constraint sweeps (e.g. what fits inside a TE budget?)", "",
+             "Candidate capital weight per swept constraint value: corridor at the latest date, "
+             "its median through time, and the realised out-of-sample TE and candidate weight "
+             "over the configurations that traded (at least one successful rebalance; "
+             "`n_configs_oos`).", ""]  # fmt: skip
+    cols = [c for c in ("data_variant", "base", "swept", "value", "n_cells", "n_ok", "median",
+                        "p25", "p75", "median_through_time", "n_configs_oos", "oos_te_median",
+                        "oos_weight_median") if c in v.columns]  # fmt: skip
+    fmt = {c: _P2 for c in ("median", "p25", "p75", "median_through_time", "oos_weight_median",
+                            "oos_te_median")}  # fmt: skip
+    fmt |= {"n_cells": num(0), "n_ok": num(0), "n_configs_oos": num(0)}
+    return lines + [md_table(v[cols], fmt), ""]
 
 
 def _oos_section(oos: pd.DataFrame, spec: ExperimentSpec, min_oos: int) -> list[str]:

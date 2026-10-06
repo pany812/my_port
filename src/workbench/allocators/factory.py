@@ -8,8 +8,10 @@ from workbench.allocators.base import Allocator
 from workbench.allocators.naive import EqualWeight, InverseVol, SAAPlus, StaticSAA
 from workbench.allocators.riskfolio_hc import RiskfolioHC
 from workbench.allocators.riskfolio_mr import RiskfolioMeanRisk
+from workbench.allocators.riskfolio_rb import RiskfolioRiskBudget
 from workbench.allocators.skfolio_hc import SkfolioHC
 from workbench.allocators.skfolio_mr import SkfolioMeanRisk
+from workbench.allocators.skfolio_rb import SkfolioRiskBudget
 
 ALLOCATOR_TYPES: dict[str, type] = {
     "static_saa": StaticSAA,
@@ -20,6 +22,8 @@ ALLOCATOR_TYPES: dict[str, type] = {
     "riskfolio_hc": RiskfolioHC,
     "skfolio_mean_risk": SkfolioMeanRisk,
     "skfolio_hc": SkfolioHC,
+    "riskfolio_risk_budget": RiskfolioRiskBudget,
+    "skfolio_risk_budget": SkfolioRiskBudget,
 }
 
 ESTIMATOR_KEYS = ("method_mu", "method_cov")
@@ -44,6 +48,11 @@ def build(type_: str, params: dict, estimator: dict | None = None) -> Allocator:
             raise ValueError(f"{type_} does not take an estimator")
         kwargs.update(estimator)
     return _cls(type_)(**kwargs)
+
+
+def full_params(type_: str, params: dict) -> dict:
+    """Stored (spec-given) params completed with the allocator's defaults."""
+    return build(type_, params).params()
 
 
 def _cls(type_: str) -> type:

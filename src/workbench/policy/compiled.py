@@ -19,6 +19,8 @@ from workbench.units import periods_per_year, vol_period_to_annual
 
 LINEAR_TOL = 1e-6  # absolute, in weight units
 TE_RTOL = 1e-4  # relative tolerance on the TE limit
+RISK_RTOL = 1e-4  # relative tolerance on risk caps
+ALPHA = 0.05  # CVaR / CDaR tail (95% confidence), same as the risk lenses
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,15 @@ class CompiledPolicy:
                   Riskfolio definition: ||R (w - b)|| / sqrt(T - 1). None = no limit.
     benchweights: the SAA, indexed by asset id; required for ``band`` and ``te``.
     solvers:      cvxpy solvers tried in order.
+    candidate:    candidate asset id (needed for ``max_candidate_risk_share``).
+    max_vol:      volatility cap per period (decimal std). Post-check: sample covariance.
+    max_cvar:     CVaR 95% cap, loss per period (decimal; Riskfolio ``CVaR_Hist``).
+    max_cdar:     CDaR 95% cap (decimal; Riskfolio ``CDaR_Abs``, uncompounded drawdowns).
+    min_return:   floor on the mean return per period (decimal). Post-check: sample mean.
+    max_candidate_risk_share: cap on the candidate's Euler share of variance (decimal).
+                  Post-check: sample covariance of the fitting window (P2-M3 decision 2a: one
+                  definition for every allocator; an optimiser using a shrunk covariance
+                  enforces it under its own covariance and may breach the sample version).
     """
 
     name: str = "unconstrained"
@@ -51,6 +62,12 @@ class CompiledPolicy:
     te: float | None = None
     benchweights: pd.Series | None = None
     solvers: tuple[str, ...] = ("CLARABEL",)
+    candidate: str | None = None
+    max_vol: float | None = None
+    max_cvar: float | None = None
+    max_cdar: float | None = None
+    min_return: float | None = None
+    max_candidate_risk_share: float | None = None
 
     def __post_init__(self) -> None:
         periods_per_year(self.freq)  # validates the code
@@ -61,6 +78,14 @@ class CompiledPolicy:
         for cls, (lo, hi) in self.class_limits.items():
             if not 0 <= lo <= hi <= 1:
                 raise ValueError(f"class limit for {cls!r} must satisfy 0 <= lo <= hi <= 1")
+        if self.max_candidate_risk_share is not None and self.candidate is None:
+            raise ValueError("max_candidate_risk_share requires the candidate id")
+
+    @property
+    def has_risk_limits(self) -> bool:
+        limits = (self.max_vol, self.max_cvar, self.max_cdar, self.min_return,
+                  self.max_candidate_risk_share)  # fmt: skip
+        return any(v is not None for v in limits)
 
     def bounds(self, assets: list[str]) -> tuple[pd.Series, pd.Series]:
         """Per-asset (lower, upper) bounds for ``assets``, defaulting to [0, 1]."""
@@ -131,4 +156,52 @@ class CompiledPolicy:
                 ann = vol_period_to_annual(te, self.freq)
                 lim = vol_period_to_annual(self.te, self.freq)
                 out.append(f"TE {ann:.4%} p.a. exceeds limit {lim:.4%} p.a.")
+        if self.has_risk_limits:
+            out += self._risk_limit_violations(w, returns)
         return out
+
+    def _risk_limit_violations(self, w: pd.Series, returns: pd.DataFrame) -> list[str]:
+        """Risk caps on the fitting window: sample moments, Riskfolio CVaR/CDaR definitions."""
+        from riskfolio.src import RiskFunctions as RF  # reference definitions
+
+        out = []
+        x = returns.to_numpy() @ w.to_numpy()
+        cov = returns.cov().to_numpy()
+        var = float(w.to_numpy() @ cov @ w.to_numpy())
+
+        def over(value: float, cap: float) -> bool:
+            return value > cap * (1 + RISK_RTOL) + 1e-12
+
+        if self.max_vol is not None:
+            vol = math.sqrt(max(var, 0.0))
+            if over(vol, self.max_vol):
+                ann, lim = (vol_period_to_annual(v, self.freq) for v in (vol, self.max_vol))
+                out.append(f"volatility {ann:.4%} p.a. exceeds cap {lim:.4%} p.a.")
+        if self.max_cvar is not None:
+            cvar = float(RF.CVaR_Hist(x, ALPHA))
+            if over(cvar, self.max_cvar):
+                out.append(f"CVaR95 {cvar:.4%} per period exceeds cap {self.max_cvar:.4%}")
+        if self.max_cdar is not None:
+            cdar = float(RF.CDaR_Abs(x, ALPHA))
+            if over(cdar, self.max_cdar):
+                out.append(f"CDaR95 {cdar:.4%} exceeds cap {self.max_cdar:.4%}")
+        if self.min_return is not None:
+            mean = float(x.mean())
+            if mean < self.min_return - 1e-12 - abs(self.min_return) * RISK_RTOL:
+                out.append(f"mean return {mean:.4%} per period below floor {self.min_return:.4%}")
+        if self.max_candidate_risk_share is not None:
+            share = candidate_variance_share(w, cov, list(returns.columns), self.candidate)
+            if share > self.max_candidate_risk_share + LINEAR_TOL:
+                out.append(f"{self.candidate}: variance share {share:.4%} exceeds cap "
+                           f"{self.max_candidate_risk_share:.4%}")  # fmt: skip
+        return out
+
+
+def candidate_variance_share(w: pd.Series, cov: np.ndarray, assets: list[str], candidate: str):
+    """Euler share of portfolio variance carried by ``candidate``: w_c (S w)_c / (w' S w)."""
+    wv = w.reindex(assets).to_numpy(dtype=float)
+    total = float(wv @ cov @ wv)
+    if total <= 0:
+        return 0.0
+    c = assets.index(candidate)
+    return float(wv[c] * (cov @ wv)[c] / total)

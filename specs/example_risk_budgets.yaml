@@ -1,0 +1,42 @@
+# P2-M3: "how much of our risk should it carry?" and "what fits inside a TE budget?".
+# Risk budgets in both libraries, a TE sweep and a risk-capped set, quarterly rebalancing.
+# Run: wb run specs/example_risk_budgets.yaml
+experiment: synthetic_trend_risk_budgets_v1
+seed: 42
+data:
+  source: synthetic
+  frequency: M
+  start: 2006-01
+  end: 2026-09
+  base_currency: SEK
+  hedging: "synthetic placeholder: fixed income SEK-hedged, equity and real assets unhedged"
+  candidate: CAND
+  synthetic:
+    mu_annual: 0.05
+    vol_annual: 0.10
+    corr_to_equity: -0.1
+    skew: 0.3
+    live_start: 2016-01
+    tail_df: 6
+saa:
+  version: example
+window: {kind: rolling, periods: 120}
+rebalance: {kind: calendar, every: Q}
+solvers: [CLARABEL, SCS]           # SCS rescues risk budgets CLARABEL fails on numerically
+grid:
+  estimators:
+    - {method_mu: hist, method_cov: ledoit}
+  allocators:
+    - {type: static_saa}
+    - {type: saa_plus, x: [0.02, 0.05, 0.10]}
+    - {type: riskfolio_mean_risk, rm: [MV, CVaR, MSV], obj: [Sharpe, MinRisk]}
+    - {type: riskfolio_risk_budget, candidate_share: [0.02, 0.05, 0.10], rm: [MV, CVaR, CDaR]}
+    - {type: skfolio_risk_budget, candidate_share: [0.02, 0.05, 0.10], rm: [MV, CVaR, CDaR]}
+  constraint_sets:
+    - {name: te, te_annual: {sweep: [0.005, 0.01, 0.02, 0.03]}, candidate_cap: 0.15}
+    - name: risk_caps
+      candidate_cap: 0.15
+      max_vol_annual: 0.09
+      max_cdar: 0.25
+      candidate_max_risk_share: 0.10
+risk_lenses: [MV, CVaR, CDaR, MSV]

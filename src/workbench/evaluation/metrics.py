@@ -20,14 +20,14 @@ IN_SAMPLE = "in_sample"
 RISK_SHARE = "candidate_risk_share"
 
 
-def risk_shares(w: pd.Series, window: pd.DataFrame, rm: str) -> pd.Series:
+def risk_shares(w: pd.Series, window: pd.DataFrame, rm: str, rf: float = 0.0) -> pd.Series:
     """Share of total risk per asset under lens ``rm`` (sums to 1). Riskfolio-Lib definitions."""
     cols = list(window.columns)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         rc = np.ravel(
             rp.Risk_Contribution(
-                w[cols].to_frame("weights"), window, cov=window.cov(), rm=rm, alpha=ALPHA
+                w[cols].to_frame("weights"), window, cov=window.cov(), rm=rm, rf=rf, alpha=ALPHA
             )
         )
     total = rc.sum()
@@ -43,17 +43,19 @@ def cell_metrics(
     candidate: str,
     lenses: tuple[str, ...],
     freq: str,
+    rf: float = 0.0,
 ) -> tuple[list[tuple[str, str, float]], dict[str, str]]:
     """Metrics for one ok cell. Returns (metric triples, errors by metric name).
 
     w, saa:  weights indexed by asset id (decimal).
     window:  the fitting window (simple returns per period of ``freq``).
+    rf:      per-period target return for lower-partial-moment lenses (FLPM, SLPM).
     """
     out: list[tuple[str, str, float]] = []
     errors: dict[str, str] = {}
     for lens in lenses:
         try:
-            out.append((RISK_SHARE, lens, float(risk_shares(w, window, lens)[candidate])))
+            out.append((RISK_SHARE, lens, float(risk_shares(w, window, lens, rf)[candidate])))
         except Exception as e:
             errors[f"{RISK_SHARE}:{lens}"] = f"{type(e).__name__}: {e}"
     try:

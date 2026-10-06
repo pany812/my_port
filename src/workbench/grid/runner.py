@@ -34,6 +34,7 @@ from workbench.policy.compiled import CompiledPolicy
 from workbench.policy.compiler import compile_policy
 from workbench.policy.saa import SAA
 from workbench.registry.store import REFERENCE_ALLOCATOR, CellRecord, Registry
+from workbench.units import return_annual_to_period
 
 log = logging.getLogger(__name__)
 
@@ -336,8 +337,9 @@ def _cell_from_result(
 def _add_metrics(rec: CellRecord, window: pd.DataFrame, saa: SAA, spec: ExperimentSpec) -> None:
     """Attach evaluation metrics to an ok cell; failures go to diagnostics, status stays ok."""
     w = pd.Series(rec.weights)
+    rf = return_annual_to_period(spec.rf_annual, spec.data.frequency)
     rec.metrics, errors = cell_metrics(
-        w, window, saa.weights, saa.candidate, spec.risk_lenses, spec.data.frequency
+        w, window, saa.weights, saa.candidate, spec.risk_lenses, spec.data.frequency, rf
     )
     if errors:
         rec.diagnostics = {**rec.diagnostics, "metric_errors": errors}

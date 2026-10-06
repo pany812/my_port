@@ -26,6 +26,8 @@ FAMILIES = {
     "riskfolio_hc": "hc",
     "skfolio_mean_risk": "mean_risk",
     "skfolio_hc": "hc",
+    "riskfolio_risk_budget": "risk_budget",
+    "skfolio_risk_budget": "risk_budget",
 }
 GROUP_KEYS = ("family", "library", "allocator", "rm", "estimator", "constraint_set")
 

@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
+import itertools
 import json
-from dataclasses import asdict, dataclass
+import math
+import re
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -381,13 +384,64 @@ def _constraint_sets(raw: Any) -> tuple[ConstraintSet, ...]:
     sets = []
     for i, d in enumerate(_list(raw, "grid.constraint_sets")):
         try:
-            sets.append(ConstraintSet.from_dict(d))
+            sets.extend(_expand_sweeps(d))
         except (ValueError, TypeError) as e:
             raise SpecError(f"grid.constraint_sets[{i}]: {e}") from None
     names = [cs.name for cs in sets]
     if len(set(names)) != len(names):
         raise SpecError(f"grid.constraint_sets: duplicate names {names}")
     return tuple(sets)
+
+
+def _expand_sweeps(d: Any) -> list[ConstraintSet]:
+    """``{key: {sweep: [v1, v2]}}`` -> one set per value (cartesian over swept keys, spec order),
+    named ``base[key=v1,...]``. Equivalent to listing the expanded sets by hand."""
+    if not isinstance(d, dict):
+        raise ValueError("expected a mapping")
+    swept = {k: v["sweep"] for k, v in d.items() if isinstance(v, dict) and set(v) == {"sweep"}}
+    if not swept:
+        return [ConstraintSet.from_dict(d)]
+    for k, values in swept.items():
+        if not isinstance(values, list) or not values:
+            raise ValueError(f"{k}.sweep must be a non-empty list")
+    if "name" not in d:
+        raise ValueError("constraint_set needs a name")
+    out = []
+    for combo in itertools.product(*swept.values()):
+        chosen = dict(zip(swept, combo, strict=True))
+        label = ",".join(f"{k}={v:g}" if isinstance(v, int | float) else f"{k}={v}"
+                         for k, v in chosen.items())  # fmt: skip
+        concrete = {**d, **chosen, "name": f"{d['name']}[{label}]"}
+        cs = ConstraintSet.from_dict(concrete)
+        out.append(replace(cs, sweep={"base": d["name"], "keys": chosen}))
+    return out
+
+
+_SWEEP_NAME = re.compile(r"^(?P<base>.+)\[(?P<pairs>[^\[\]]+)\]$")
+
+
+def sweep_metadata(cs: ConstraintSet) -> dict | None:
+    """The set's sweep ({"base", "keys"}): from the parser, or recovered from a name of the form
+    ``base[key=value,...]`` whose values match the set's fields. An explicitly listed set named
+    that way hashes identically to the swept one, so it is treated the same."""
+    if cs.sweep:
+        return cs.sweep
+    m = _SWEEP_NAME.match(cs.name)
+    if not m:
+        return None
+    keys = {}
+    for pair in m["pairs"].split(","):
+        key, _, value = pair.partition("=")
+        if not hasattr(cs, key) or key in ("name", "sweep"):
+            return None
+        actual = getattr(cs, key)
+        try:
+            if not math.isclose(float(value), float(actual)):
+                return None
+        except (TypeError, ValueError):
+            return None
+        keys[key] = actual
+    return {"base": m["base"], "keys": keys}
 
 
 # --- helpers ---------------------------------------------------------------------------
@@ -426,8 +480,18 @@ def _period_str(v: Any) -> str:
     return str(v)
 
 
+# Constraint-set keys added after Phase 1 enter the canonical form (and config_id) only when
+# set, so existing specs keep their spec_hash and config_ids. ``sweep`` is metadata: never hashed.
+_LATER_CS_KEYS = ("max_vol_annual", "max_cvar_period", "max_cdar", "min_return_annual",
+                  "candidate_max_risk_share")  # fmt: skip
+
+
 def constraint_set_dict(cs: ConstraintSet) -> dict:
     d = asdict(cs)
+    d.pop("sweep")
+    for k in _LATER_CS_KEYS:
+        if d[k] is None:
+            del d[k]
     if d["class_limits"] is not None:
         d["class_limits"] = {k: list(v) for k, v in d["class_limits"].items()}
     return d

@@ -63,8 +63,17 @@ def linear_constraints(
     return np.asarray(A, dtype=float), np.asarray(B, dtype=float)
 
 
-def apply_mean_risk(port: rp.Portfolio, policy: CompiledPolicy, assets: list[str]) -> None:
-    """Set constraints, TE, band and solvers on a Classic ``rp.Portfolio`` in place."""
+def apply_mean_risk(
+    port: rp.Portfolio, policy: CompiledPolicy, assets: list[str], rm: str | None = None
+) -> None:
+    """Set constraints, TE, band, risk caps and solvers on a Classic ``rp.Portfolio`` in place.
+
+    Risk caps use Riskfolio's per-period units (``upperdev``, ``upperCVaR``, ``upperCDaR``,
+    ``lowerret``). The candidate risk-share cap goes in as ``arcinequality`` **only when
+    rm == "MV"**: Riskfolio compares variance contributions against the objective's risk
+    measure, so with any other ``rm`` the constraint is meaningless (verified: under CVaR it
+    pushed the candidate's variance share from 0.1% to 70%). Other cases rely on the post-check.
+    """
     port.sht = not policy.long_only
     port.upperlng = 1.0
     port.solvers = list(policy.solvers)
@@ -80,6 +89,23 @@ def apply_mean_risk(port: rp.Portfolio, policy: CompiledPolicy, assets: list[str
     if policy.band is not None:
         port.allowTO = True
         port.turnover = policy.band
+    rc_cap = policy.max_candidate_risk_share is not None and rm == "MV"
+    # Riskfolio 7.4.0 bug: arcinequality switches MV to its SDP form, which never defines the
+    # volatility variable that the upperdev branch uses (UnboundLocalError: 'g'). With both
+    # limits, keep the risk-share cap in the optimiser; the post-check holds the vol cap.
+    if policy.max_vol is not None and not rc_cap:
+        port.upperdev = policy.max_vol
+    if policy.max_cvar is not None:
+        port.upperCVaR = policy.max_cvar
+    if policy.max_cdar is not None:
+        port.upperCDaR = policy.max_cdar
+    if policy.min_return is not None:
+        port.lowerret = policy.min_return
+    if rc_cap:
+        a_rc = np.zeros((1, len(assets)))
+        a_rc[0, assets.index(policy.candidate)] = 1.0
+        port.arcinequality = a_rc
+        port.brcinequality = np.array([[policy.max_candidate_risk_share]])
 
 
 def hc_bounds(policy: CompiledPolicy, assets: list[str]) -> tuple[pd.Series, pd.Series]:

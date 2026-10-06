@@ -43,7 +43,9 @@ class RiskfolioMeanRisk:
             port.cov, diag["cov_cast_from_complex"] = as_real(port.cov, f"cov ({self.method_cov})")
             if c.mu_override is not None:
                 port.mu = c.mu_override.to_frame().T[assets]
-            apply_mean_risk(port, c.policy, assets)
+            apply_mean_risk(port, c.policy, assets, rm=self.rm)
+            if c.policy.max_vol is not None and port.upperdev is None:
+                diag["vol_cap"] = "post-check only (Riskfolio upperdev + arcinequality bug)"
             diag["solvers"] = list(c.policy.solvers)
             return port.optimization(
                 model="Classic", rm=self.rm, obj=self.obj, rf=c.policy.rf, l=self.l, hist=True

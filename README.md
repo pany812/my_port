@@ -90,6 +90,9 @@ grid:
     - {name: bands_5pct, band: 0.05, candidate_cap: 0.10}
     - {name: te_2pct, te_annual: 0.02, candidate_cap: 0.10}
     - {name: ranges, asset_ranges: true, class_limits: {equity: [0.45, 0.55]}}
+    - {name: te, te_annual: {sweep: [0.005, 0.01, 0.02]}}      # one set per value
+    - {name: caps, max_vol_annual: 0.09, max_cvar_period: 0.03, max_cdar: 0.25,
+       min_return_annual: 0.02, candidate_max_risk_share: 0.10}
 risk_lenses: [MV, CVaR, CDaR]        # lenses for the candidate's risk share
 solvers: [CLARABEL]
 ```
@@ -104,7 +107,13 @@ these sections keep their `spec_hash`. See `specs/example_frictions.yaml`.
 
 **Constraint-set keys.** `candidate_cap` is the maximum candidate weight. `asset_ranges` applies
 the SAA's per-asset ranges. `class_limits` bounds summed class weights. `band` is a per-asset band
-`|w − SAA| ≤ band`. `te_annual` is the annual tracking-error limit vs the SAA.
+`|w − SAA| ≤ band`. `te_annual` is the annual tracking-error limit vs the SAA. Risk caps
+carry their units in the name: `max_vol_annual`, `max_cvar_period` (CVaR 95% loss per return
+period), `max_cdar` (CDaR 95% of uncompounded returns), `min_return_annual`, and
+`candidate_max_risk_share` (the candidate's share of portfolio variance). Caps are post-checked
+on the window's sample moments for every allocator. `{sweep: [...]}` on any key expands the set
+into one set per value (cartesian over several keys), named `base[key=value]`; the report shows
+the corridor and realised out-of-sample TE per value.
 
 Mean-risk allocators enforce all of these keys. HC enforces asset bounds and the band only.
 **Every allocator's output is post-checked against the full constraint set**: a breach records
@@ -117,6 +126,12 @@ under reordering. In walk-forward mode every rebalance date is a cell.
 **Data variants.** If the candidate has backfilled observations, every experiment also runs a
 `live_only` variant. The report always shows it and flags out-of-sample samples shorter than 36
 periods.
+
+**Risk budgets.** `riskfolio_risk_budget` / `skfolio_risk_budget` (`candidate_share`, `rm`,
+`rest: saa | equal`) give the candidate a target share of risk; the report shows the capital
+each target implies per lens and the realised share. Downside lenses `MSV`, `FLPM`, `SLPM` work
+in `rm` and `risk_lenses`; denoised covariances `fixed`, `spectral`, `shrink` in `method_cov`.
+Add `SCS` to `solvers` for risk budgets. See `specs/example_risk_budgets.yaml`.
 
 **Two libraries.** `skfolio_mean_risk` and `skfolio_hc` take the same parameters as their
 `riskfolio_*` twins (estimator names in Riskfolio vocabulary; unmapped names are recorded as
@@ -160,6 +175,7 @@ See `specs/example_two_libraries.yaml`.
                ...  # return a pd.Series of weights indexed by asset, a Riskfolio-Lib
                # one-column "weights" DataFrame, None (solver found nothing -> infeasible),
                # or raise Infeasible("why") when the problem is infeasible before solving
+
            return guarded_fit(impl, returns, ctx)
    ```
 

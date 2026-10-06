@@ -47,6 +47,7 @@ class SkfolioMeanRisk:
                 cdar_beta=sk.BETA,
                 raise_on_failure=True,
                 **mean_risk_kwargs(c.policy, assets),
+                **sk.mar_kwargs(self.rm, c.policy.rf),
             )
             y = tracking_target(c.policy, r)
             errors = []

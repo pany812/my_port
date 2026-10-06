@@ -71,6 +71,13 @@ tests/          pytest, synthetic fixtures only
   weights after liquidity/threshold rules are on the path (`RebalanceFit.executed`).
 - Registry changes are additive only: a new column needs an entry in `registry.store.BACKFILL`
   with a value that is exact for older rows, so `wb migrate` can upgrade existing databases.
+- Risk caps and the candidate risk-share cap (P2-M3) are post-checked on the fitting window's
+  **sample** moments (vol, mean, variance share) and Riskfolio's CVaR/CDaR definitions: one
+  definition for every allocator. Optimisers using shrunk estimators enforce caps under their
+  own estimates and may breach the sample version; such cells are recorded `infeasible`.
+- Constraint-set keys and sections added after Phase 1 enter the canonical form only when set
+  (existing `spec_hash`/`config_id` unchanged); `sweep` metadata is never hashed, so a sweep and
+  the same sets listed by hand are identical.
 - Evidence (P2-M1, `evaluation/inference.py`, `evaluation/evidence.py`) is disclosure, never a
   gate, and never changes a cell's status. Sharpe ratios are on returns in excess of the SAA's
   cash asset (or the policy rf): raw-return Sharpe inflates cash-heavy portfolios. Spanning
@@ -118,6 +125,27 @@ or by running it on synthetic data (October 2026).
 - `rp.loadings_matrix(X=factors, Y=assets)` with stepwise selection adds a `const` column;
   drop it before setting `port.B` for factor risk-contribution constraints.
 - Riskfolio-Lib has no backtester. Its single backtesting tutorial uses vectorbt.
+- `arcinequality`/`brcinequality` (risk-contribution limits) are only meaningful with
+  `rm="MV"`: Riskfolio compares variance contributions against the objective's risk measure,
+  so under CVaR a 5% candidate cap pushed its variance share from 0.1% to 70%. Pass them for
+  MV only; everything else relies on the post-check.
+- **Bug: `upperdev` together with `arcinequality` (MV) raises `UnboundLocalError: 'g'`**: the
+  risk-contribution constraint switches MV to the SDP form, which never defines `g`, and the
+  `upperdev` branch only checks `network_sdp`/`cluster_sdp`. We drop `upperdev` in that case
+  and the post-check holds the vol cap (`diagnostics["vol_cap"]`).
+- `upperdev`, `upperCVaR`, `upperCDaR`, `lowerret` bind exactly as documented (per period;
+  CDaR on uncompounded cumulative returns); skfolio's `max_standard_deviation`, `max_cvar`,
+  `max_cdar`, `min_return` use the same definitions.
+- `rp_optimization` returns None for numerical failures too (an FLPM budget fails in CLARABEL
+  and ECOS, solves in SCS). Positive budgets are always feasible unless the linear constraints
+  are, so classify with `policy.skfolio.linear_infeasibility`; add SCS to `solvers`.
+- Risk budgets are exact (realised share = target) for smooth measures (MV, MSV). For CVaR and
+  CDaR on historical scenarios contributions are not unique: the realised share differs from
+  the target at the optimum (Riskfolio and skfolio give the same weights), and on short windows
+  (36 months, ~2 tail scenarios) different targets can give nearly the same weight.
+- `assets_stats` has no `detone` argument (use `dict_cov`). Denoising `fixed`/`spectral`/`shrink`
+  works in Classic and HC; **detoned covariances are not PSD** (min eigenvalue ~ -7e-4): keep
+  detoning out of optimisers.
 
 ## skfolio 1.4.11: verified behaviour and traps
 
@@ -144,6 +172,10 @@ Checked on synthetic data (October 2026):
 - `Portfolio.contribution` is not Euler-additive (variance sums to 2x, CDaR ~1.5% off): risk
   shares stay on Riskfolio-Lib/our code.
 - NCO takes no composite weight bounds here; the post-check catches breaches.
+- Downside measures: `MSV` -> `SEMI_DEVIATION`; `FLPM` -> `FIRST_LOWER_PARTIAL_MOMENT` and
+  `SLPM` -> `SEMI_DEVIATION`, both with `min_acceptable_return=rf` (a **scalar**: an array raises
+  "unhashable type"). Denoised `fixed` -> `DenoiseCovariance` (identical); `spectral`/`shrink`
+  have no skfolio equivalent. `RiskBudgeting` gives Riskfolio's risk-budget weights to ~1e-5.
 - **Bounded HRP/HERC returns NaN weights** when lower bounds bind: `_hrp.py:486` divides by
   `weights[cluster[0]]`, which is 0 once an asset is pushed to zero (0/0). Upper bounds alone
   are fine. Riskfolio solves the same bounds. `SkfolioHC` maps non-finite weights to
