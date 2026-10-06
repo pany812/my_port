@@ -29,6 +29,7 @@ from workbench.evaluation.inference import (
     sharpe_diff_test,
     spanning_tests,
 )
+from workbench.evaluation.stats import ann_return, ann_vol, max_drawdown
 from workbench.units import return_period_to_annual, sharpe_period_to_annual
 
 N_BOOT = 4999
@@ -158,3 +159,46 @@ def spanning_evidence(
         out.append(evidence_row(CANDIDATE, test, f.statistic, f.p_value,
                         {**common, "df1": f.df1, "df2": f.df2}))  # fmt: skip
     return out
+
+
+PROFILE = "profile"
+
+
+def profile_evidence(
+    returns: pd.DataFrame, saa: pd.Series, candidate: str, backfilled: pd.Series, freq: str,
+    riskless: pd.Series | float = 0.0,
+) -> list[dict]:  # fmt: skip
+    """Standalone profiles of the candidate and of the SAA (fixed weights, rebalanced every
+    period) over the variant's history, for the IC memo. Subjects ``profile:candidate`` and
+    ``profile:saa``, test ``profile``; statistic = annualised return.
+
+    extra: ann_return (geometric), ann_vol, max_dd (compounded), sharpe_ann (mean / std of returns
+    in excess of ``riskless``, x sqrt(n)), n_obs, first, last; candidate only: corr_saa,
+    backfilled_share, live_start (first live observation).
+    """
+    rf = (riskless.reindex(returns.index).to_numpy(float) if isinstance(riskless, pd.Series)
+          else np.full(len(returns), float(riskless)))  # fmt: skip
+    saa_r = returns @ saa.reindex(returns.columns)
+    live = backfilled.reindex(returns.index).fillna(False)
+    common = {"n_obs": len(returns), "first": returns.index[0].date().isoformat(),
+              "last": returns.index[-1].date().isoformat()}  # fmt: skip
+    out = []
+    for subject, r in (("profile:candidate", returns[candidate]), ("profile:saa", saa_r)):
+        ex = r.to_numpy(float) - rf
+        sd = ex.std(ddof=1)
+        extra = {
+            **common,
+            "ann_return": ann_return(r, freq),
+            "ann_vol": ann_vol(r, freq),
+            "max_dd": max_drawdown(r),
+            "sharpe_ann": sharpe_period_to_annual(ex.mean() / sd, freq) if sd > 0 else None,
+            "excess_over": riskless.name if isinstance(riskless, pd.Series) else "rf",
+        }
+        if subject == "profile:candidate":
+            extra["corr_saa"] = float(np.corrcoef(r.to_numpy(float), saa_r.to_numpy(float))[0, 1])
+            extra["backfilled_share"] = float(live.mean())
+            extra["live_start"] = (
+                None if live.all() else returns.index[~live.to_numpy()][0].date().isoformat()
+            )
+        out.append(evidence_row(subject, PROFILE, extra["ann_return"], None, extra))
+    return out  # fmt: skip

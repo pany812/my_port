@@ -18,6 +18,7 @@ uv sync                                   # Python 3.12 venv with pinned depende
 uv run pytest -q                          # must pass before every commit
 uv run wb run specs/example_synthetic.yaml -v
 uv run wb report synthetic_trend_v1       # rebuild the report from the registry
+uv run wb memo synthetic_trend_v1         # IC memo (SCQA) from the registry
 ```
 
 `wb run` writes the registry (default `sqlite:///out/registry.db`; override with `--registry` or
@@ -103,6 +104,18 @@ stress:                              # optional: crisis windows and bootstrap pa
   windows: default                   # or {gfc: [2007-11, 2009-02], ...}
   weights: [0.05]
   bootstrap: {n_paths: 2000, horizon_years: 10, block: null}
+decision:                            # optional, not hashed: the IC decision for `wb memo`
+  candidate_name: "Trend programme X"
+  recommendation: "Allocate 3% inside a 2-5% corridor, funded pro rata."
+  proposal: {weight: 0.03, funding: pro_rata}
+  target_corridor: [0.02, 0.05]
+  conditions: ["Rebalance to 3% when outside the corridor"]
+  kill_criteria:
+    - {metric: te_vs_saa, above: 0.02, months: 12}       # rolling realised TE vs the SAA
+    - {metric: active_return, below: -0.03, months: 24}  # rolling return minus the SAA's
+    - {text: "Key-person event at the manager"}
+  owner: "CIO office"
+  review: 2027-06
 ```
 
 **Frictions (optional).** `costs` are charged on every trade (the SAA path pays them too) and all
@@ -180,6 +193,18 @@ each variant's history (mean block ceil(T^(1/3)) unless `block` is set), the sam
 weight, and reports max drawdown, CDaR, CVaR, return and volatility, paired with the SAA. Results
 are disclosures stored in `evidence`. On synthetic data the windows carry no real crisis. See
 `specs/example_stress.yaml`.
+
+**IC memo.** `wb memo <experiment>` writes `out/<experiment>/memo.md`, a short SCQA document
+built from the registry alone: the recommendation (from `decision`, written by people; the
+workbench never recommends), a checks table flagging where the proposal and the evidence disagree
+(corridor, significance net of search, DSR, PBO, spanning, stress, BL breakeven vs CMA, library
+agreement, failures, backfill), the candidate's standalone profile, the corridor, evidence, risk
+and stress at the proposal, conditions, and kill criteria replayed on the walk-forward path of the
+`saa_plus` configuration at the proposed weight ("fired in 2 of 226 windows"). Flags are
+information, not gates. `decision` is not part of `spec_hash`: edit it after a run and pass the
+revised file with `wb memo <experiment> --spec specs/x.yaml` (refused if anything else changed).
+Without a `decision` block the memo is a DRAFT around the corridor median. Add `saa_plus` at the
+proposed weight to the grid (and to `stress.weights`) so the memo has evidence at that weight.
 
 **Two libraries.** `skfolio_mean_risk` and `skfolio_hc` take the same parameters as their
 `riskfolio_*` twins (estimator names in Riskfolio vocabulary; unmapped names are recorded as

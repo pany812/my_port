@@ -1,5 +1,6 @@
-# P2-M5: stress. Crisis windows (policy portfolios and walk-forward paths) and stationary
-# block-bootstrap paths at the corridor's weights. Data start 2001 and a 60-month window put the
+# P2-M5: stress, and the P2-M6 IC memo (`wb memo synthetic_trend_stress_v1`). Crisis windows
+# (policy portfolios and walk-forward paths) and stationary block-bootstrap paths at the
+# corridor's weights. Data start 2001 and a 60-month window put the
 # GFC, COVID and 2022 windows inside the out-of-sample period. Synthetic data has no real crises:
 # this exercises the machinery; the numbers mean something only on real data.
 # Run: wb run specs/example_stress.yaml
@@ -30,7 +31,7 @@ grid:
     - {method_mu: hist, method_cov: ledoit}
   allocators:
     - {type: static_saa}
-    - {type: saa_plus, x: [0.02, 0.05, 0.10]}
+    - {type: saa_plus, x: [0.02, 0.03, 0.05, 0.10]}   # 0.03 = the proposal (memo)
     - {type: riskfolio_mean_risk, rm: [MV, CVaR, CDaR], obj: [Sharpe, MinRisk]}
     - {type: riskfolio_hc, model: [HRP, HERC]}
   constraint_sets:
@@ -39,5 +40,21 @@ grid:
 risk_lenses: [MV, CVaR, CDaR]
 stress:
   windows: default                 # gfc 2007-11..2009-02, covid 2020-02..2020-03, rates_2022
-  weights: [0.15]                  # stressed besides the SAA and the corridor's P25/median/P75
+  weights: [0.03, 0.15]            # stressed besides the SAA and the corridor's P25/median/P75
   bootstrap: {n_paths: 2000, horizon_years: 10}
+decision:                          # governance, not hashed: edit and re-run `wb memo --spec`
+  candidate_name: "Synthetic trend programme"
+  recommendation: >-
+    Allocate 3% of the SAA, funded pro rata, inside an approved 2-5% corridor, reviewed after
+    two years of live data.
+  proposal: {weight: 0.03, funding: pro_rata}
+  target_corridor: [0.02, 0.05]
+  conditions:
+    - "Rebalance to 3% when the weight leaves the 2-5% corridor."
+    - "Report realised TE vs the SAA quarterly."
+  kill_criteria:
+    - {metric: te_vs_saa, above: 0.01, months: 12}
+    - {metric: active_return, below: -0.02, months: 24}
+    - {text: "Departure of the programme's key person"}
+  owner: "CIO office"
+  review: 2028-10

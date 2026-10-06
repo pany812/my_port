@@ -84,11 +84,12 @@ def test_report_section(wf):
     assert "Sample too short" in md  # live-only OOS is short
 
 
-def test_in_sample_mode_has_spanning_only(tmp_path):
+def test_in_sample_mode_has_no_path_tests(tmp_path):
     reg = Registry(f"sqlite:///{tmp_path / 'r.db'}")
     s = run_experiment(parse_spec(SMALL), reg)  # SMALL is in-sample
     ev = reg.evidence(s.experiment_id)
-    assert set(ev.subject) == {"candidate"}
+    assert set(ev.subject) == {"candidate", "profile:candidate", "profile:saa"}
+    assert not ev.test.isin(["sharpe_diff", "dsr", "pbo"]).any()
 
 
 def test_spanning_without_riskless_uses_hk_and_kz():

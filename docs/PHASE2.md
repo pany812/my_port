@@ -104,7 +104,10 @@ persistence).
   optionally skfolio `SyntheticData` (vine copula). Report: distribution of max drawdown and
   CDaR with and without the candidate at the corridor's median weight.
 
-**P2-M6 IC memo.** `wb memo <experiment>`: an SCQA markdown memo from the registry. A spec
+**P2-M6 IC memo.** *Built 2026-10-06* (decision block unhashed, revisions via `--spec`;
+people write the recommendation, the memo flags disagreements; kill criteria replayed on the
+proposal's walk-forward path; candidate/SAA profiles stored as evidence; default SCQA layout until
+the house template exists). `wb memo <experiment>`: an SCQA markdown memo from the registry. A spec
 `decision:` block holds target corridor, conditions and kill criteria (e.g. "revisit if
 realised TE > x for n months"). Format to follow the house template (open question).
 

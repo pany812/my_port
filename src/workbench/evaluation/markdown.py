@@ -10,8 +10,15 @@ Formatter = Callable[[object], str]
 
 
 def pct(digits: int = 1) -> Formatter:
-    """Decimal -> percent string, e.g. 0.0512 -> '5.1%'. NaN -> '–'."""
-    return lambda v: "–" if pd.isna(v) else f"{float(v) * 100:.{digits}f}%"
+    """Decimal -> percent string, e.g. 0.0512 -> '5.1%'. NaN -> '–'. No '-0.0%'."""
+
+    def fmt(v) -> str:
+        if pd.isna(v):
+            return "–"
+        text = f"{float(v) * 100:.{digits}f}"
+        return f"{text.lstrip('-') if float(text) == 0 else text}%"
+
+    return fmt
 
 
 def num(digits: int = 0) -> Formatter:

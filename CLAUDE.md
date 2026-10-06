@@ -102,6 +102,13 @@ tests/          pytest, synthetic fixtures only
   time. Bootstrap: stationary (Politis–Romano) over whole rows, mean block ceil(T^(1/3)), seeded
   per variant, the same paths for every weight (paired). Meaningful crisis results need real
   data; synthetic reports say so.
+- IC memo (P2-M6, `evaluation/memo.py`, `wb memo`): built from the registry alone. The spec's
+  `decision` block is governance, **excluded from `spec_hash`**, read from the stored spec or a
+  revised `--spec` file whose hash must match. The workbench never writes a recommendation; the
+  memo's checks flag disagreements (information, not gates; thresholds are module constants,
+  significance 5% pending house conventions). Kill criteria (`te_vs_saa`, `active_return` over
+  n months) are replayed on the stored path of `saa_plus` at the proposed weight and funding.
+  Candidate and SAA profiles are `evidence` rows (subjects `profile:candidate`, `profile:saa`).
 - Max-Sharpe with no feasible positive expected excess return over rf is undefined: both
   mean-risk allocators record `infeasible` with the reason (`policy.skfolio.sharpe_undefined`).
 - Evidence (P2-M1, `evaluation/inference.py`, `evaluation/evidence.py`) is disclosure, never a

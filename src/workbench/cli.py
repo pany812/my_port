@@ -1,4 +1,4 @@
-"""Command line: ``wb run specs/<name>.yaml`` and ``wb report <experiment>``.
+"""Command line: ``wb run specs/<name>.yaml``, ``wb report <experiment>``, ``wb memo <experiment>``.
 
 The registry URL comes from ``--registry``, else ``$WB_REGISTRY``, else
 ``sqlite:///out/registry.db``. Reports go to ``<out>/<experiment name>/``.
@@ -14,6 +14,7 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from workbench.evaluation.memo import build_memo
 from workbench.evaluation.report import build_report, headline_text
 from workbench.grid.runner import run_experiment
 from workbench.grid.spec import SpecError, load_spec
@@ -35,9 +36,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         registry = _open_registry(args.registry)
         if args.command == "run":
             return _run(args, registry)
+        if args.command == "memo":
+            return _memo(args, registry)
         return _report(args, registry)
     except (SpecError, KeyError, FileNotFoundError, NotImplementedError,
-            RegistrySchemaError) as e:  # fmt: skip
+            RegistrySchemaError, MemoError) as e:  # fmt: skip
         sys.stderr.write(f"wb: error: {e}\n")
         return 2
 
@@ -64,6 +67,27 @@ def _report(args, registry: Registry) -> int:
     return 0
 
 
+class MemoError(ValueError):
+    """The memo cannot be built (e.g. a revised spec that no longer matches the experiment)."""
+
+
+def _memo(args, registry: Registry) -> int:
+    experiment_id = registry.resolve(args.experiment)
+    try:
+        memo = build_memo(registry, experiment_id, spec_path=args.spec)
+    except ValueError as e:
+        raise MemoError(str(e)) from None
+    path = memo.write(_out_dir(args.out, memo.name))
+    flagged = memo.checks[memo.checks["flag"] != ""]
+    lines = [
+        f"memo {memo.name} ({experiment_id}): {memo.status}, "
+        f"{len(flagged)} of {len(memo.checks)} checks flagged"
+    ]
+    lines += [f"  ! {r.check}: {r.value}" for r in flagged.itertuples()]
+    _emit("\n".join(lines) + f"\nwrote {path}\n")
+    return 0
+
+
 def _migrate(args) -> int:
     reg = _open_registry(args.registry, check=False)
     actions = reg.migrate()
@@ -86,6 +110,14 @@ def _parser() -> argparse.ArgumentParser:
                      help="when the same spec + data vintage is already registered")  # fmt: skip
     rep = sub.add_parser("report", parents=[common], help="rebuild a report from the registry")
     rep.add_argument("experiment", help="experiment name (latest run) or experiment_id")
+    memo = sub.add_parser("memo", parents=[common], help="write the IC memo from the registry")
+    memo.add_argument("experiment", help="experiment name (latest run) or experiment_id")
+    memo.add_argument(
+        "--spec",
+        type=Path,
+        default=None,
+        help="revised spec for the decision block (its spec_hash must match)",
+    )
     sub.add_parser(
         "migrate", parents=[common], help="add columns from newer versions to an existing registry"
     )

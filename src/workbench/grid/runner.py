@@ -27,7 +27,7 @@ from workbench.backtest.walkforward import PathResult, WalkForwardEngine
 from workbench.data.align import align_history, data_vintage
 from workbench.data.base import MarketData
 from workbench.data.loaders import load_market
-from workbench.evaluation.evidence import path_evidence, spanning_evidence
+from workbench.evaluation.evidence import path_evidence, profile_evidence, spanning_evidence
 from workbench.evaluation.metrics import cell_metrics
 from workbench.evaluation.stress import corridor_quantiles, stress_evidence, stress_weights
 from workbench.grid.expand import CellConfig, expand
@@ -138,6 +138,9 @@ def run_experiment(
             ev = (path_evidence(paths, saa_path, freq, spec.seed, riskless=rf)
                   if saa_path is not None else [])  # fmt: skip
         ev += spanning_evidence(returns, saa.candidate, freq, _riskless(saa))
+        rl = _riskless(saa)
+        cash = returns[rl] if rl is not None else ctx.policies[spec.constraint_sets[0].name].rf
+        ev += profile_evidence(returns, saa.weights, saa.candidate, vdata.backfilled, freq, cash)
         evidence_rows += [{"data_variant": variant, **r} for r in ev]
         log.info("variant %s done (%.1fs)", variant, time.perf_counter() - t0)
     if spec.stress is not None:

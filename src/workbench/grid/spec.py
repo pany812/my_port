@@ -123,6 +123,62 @@ class StressSpec:
         }  # fmt: skip
 
 
+KILL_METRICS = ("te_vs_saa", "active_return")
+
+
+@dataclass(frozen=True)
+class KillCriterion:
+    """A structured kill criterion (``metric`` with ``above`` or ``below`` over ``months``) or a
+    free-text one (``text``).
+
+    te_vs_saa:     rolling realised TE vs the SAA over ``months`` (annualised, decimal).
+    active_return: rolling compounded return minus the SAA's over ``months`` (decimal).
+    """
+
+    metric: str | None = None
+    above: float | None = None
+    below: float | None = None
+    months: int | None = None
+    text: str | None = None
+
+    def describe(self) -> str:
+        if self.text is not None:
+            return self.text
+        op, v = (">", self.above) if self.above is not None else ("<", self.below)
+        return f"{self.metric} {op} {v:.2%} over {self.months} months"
+
+
+@dataclass(frozen=True)
+class DecisionSpec:
+    """The IC decision (P2-M6). Governance, not experimental design: it feeds no calculation and
+    is excluded from ``spec_hash``. ``proposal_weight`` / ``target_corridor`` are decimal
+    candidate weights; ``review`` a period string."""
+
+    candidate_name: str | None = None
+    recommendation: str | None = None
+    proposal_weight: float | None = None
+    proposal_funding: str | None = None
+    target_corridor: tuple[float, float] | None = None
+    conditions: tuple[str, ...] = ()
+    kill_criteria: tuple[KillCriterion, ...] = ()
+    owner: str | None = None
+    review: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        """The spec form (for dumping specs built in code)."""
+        out: dict[str, Any] = {
+            "candidate_name": self.candidate_name, "recommendation": self.recommendation,
+            "target_corridor": None if self.target_corridor is None else list(self.target_corridor),
+            "conditions": list(self.conditions) or None, "owner": self.owner,
+            "review": self.review,
+        }  # fmt: skip
+        if self.proposal_weight is not None:
+            out["proposal"] = {"weight": self.proposal_weight, "funding": self.proposal_funding}
+        if self.kill_criteria:
+            out["kill_criteria"] = [_drop_none(asdict(k)) for k in self.kill_criteria]
+        return out
+
+
 @dataclass(frozen=True)
 class BacktestSpec:
     """walk_forward: fit at every rebalance date, out-of-sample path (default).
@@ -158,6 +214,7 @@ class ExperimentSpec:
     liquidity: LiquiditySpec | None = None
     cma: CMA | None = None
     stress: StressSpec | None = None
+    decision: DecisionSpec | None = None  # not hashed: governance, feeds no calculation
     rf_annual: float = 0.0
     solvers: tuple[str, ...] = ("CLARABEL",)
     source_text: str | None = None  # raw YAML as written; stored in the registry, not hashed
@@ -209,7 +266,10 @@ class ExperimentSpec:
         """The YAML as written, or a dump of the canonical form for specs built in code."""
         if self.source_text is not None:
             return self.source_text
-        doc = _drop_none({"experiment": self.experiment, **self.canonical()})
+        doc = {"experiment": self.experiment, **self.canonical()}
+        if self.decision is not None:
+            doc["decision"] = self.decision.as_dict()
+        doc = _drop_none(doc)
         return yaml.safe_dump(doc, sort_keys=False)
 
 
@@ -243,6 +303,7 @@ def parse_spec(src: str | dict) -> ExperimentSpec:
             "liquidity",
             "cma",
             "stress",
+            "decision",
         },
     )
     data = _data(top["data"])
@@ -279,6 +340,7 @@ def parse_spec(src: str | dict) -> ExperimentSpec:
         liquidity=_liquidity(top["liquidity"], data.frequency) if "liquidity" in top else None,
         cma=cma,
         stress=_stress(top["stress"]) if "stress" in top else None,
+        decision=_decision(top["decision"], str(funding)) if "decision" in top else None,
         estimators=estimators,
         allocators=allocators,
         constraint_sets=constraint_sets,
@@ -400,6 +462,63 @@ def _cma(d: Any, data: DataSpec) -> CMA:
         raise
     except (ValueError, TypeError) as e:
         raise SpecError(f"cma: {e}") from None
+
+
+_FUNDING = re.compile(r"^(pro_rata|asset:\S+|class:\S+)$")
+
+
+def _decision(d: Any, default_funding: str) -> DecisionSpec:
+    """``decision:`` block: candidate_name, recommendation, proposal {weight, funding},
+    target_corridor [lo, hi], conditions [text], kill_criteria, owner, review."""
+    d = _keys(d, "decision", optional={"candidate_name", "recommendation", "proposal",
+                                       "target_corridor", "conditions", "kill_criteria", "owner",
+                                       "review"})  # fmt: skip
+    weight, funding = None, None
+    if "proposal" in d:
+        p = _keys(d["proposal"], "decision.proposal", required={"weight"}, optional={"funding"})
+        weight = p["weight"]
+        if not (isinstance(weight, int | float) and not isinstance(weight, bool)
+                and 0 < weight < 1):  # fmt: skip
+            raise SpecError("decision.proposal.weight must be a candidate weight in (0, 1)")
+        funding = str(p.get("funding", default_funding))
+        if not _FUNDING.match(funding):
+            raise SpecError("decision.proposal.funding must be pro_rata, asset:<id> or "
+                            "class:<name>")  # fmt: skip
+        weight = float(weight)
+    corridor = d.get("target_corridor")
+    if corridor is not None:
+        ok = (isinstance(corridor, list) and len(corridor) == 2
+              and all(isinstance(x, int | float) and not isinstance(x, bool) for x in corridor)
+              and 0 <= corridor[0] <= corridor[1] <= 1)  # fmt: skip
+        if not ok:
+            raise SpecError("decision.target_corridor must be [lo, hi] with 0 <= lo <= hi <= 1")
+        corridor = (float(corridor[0]), float(corridor[1]))
+    conditions = d.get("conditions", [])
+    if not isinstance(conditions, list) or not all(isinstance(c, str) for c in conditions):
+        raise SpecError("decision.conditions must be a list of text")
+    kills = []
+    for i, k in enumerate(d.get("kill_criteria", []) or []):
+        path = f"decision.kill_criteria[{i}]"
+        if isinstance(k, dict) and set(k) == {"text"}:
+            kills.append(KillCriterion(text=str(k["text"])))
+            continue
+        k = _keys(k, path, required={"metric", "months"}, optional={"above", "below"})
+        if k["metric"] not in KILL_METRICS:
+            raise SpecError(f"{path}.metric must be one of {list(KILL_METRICS)}")
+        if ("above" in k) == ("below" in k):
+            raise SpecError(f"{path}: give exactly one of above and below")
+        if not isinstance(k["months"], int) or k["months"] < 2:
+            raise SpecError(f"{path}.months must be an integer >= 2")
+        kills.append(KillCriterion(k["metric"], k.get("above"), k.get("below"), k["months"]))
+    review = d.get("review")
+    return DecisionSpec(
+        candidate_name=None if d.get("candidate_name") is None else str(d["candidate_name"]),
+        recommendation=None if d.get("recommendation") is None else str(d["recommendation"]),
+        proposal_weight=weight, proposal_funding=funding, target_corridor=corridor,
+        conditions=tuple(conditions), kill_criteria=tuple(kills),
+        owner=None if d.get("owner") is None else str(d["owner"]),
+        review=None if review is None else _period_str(review),
+    )  # fmt: skip
 
 
 _WINDOW_NAME = re.compile(r"^[A-Za-z0-9_]{1,24}$")
