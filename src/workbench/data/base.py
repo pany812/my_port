@@ -26,6 +26,8 @@ class MarketData:
     asset_class: asset class label per asset id.
     backfilled:  bool per date, True where the candidate observation is backfilled or proxied
                  rather than live. Kept outside ``returns`` so it is never mistaken for an asset.
+    vintage_tag: the source's vintage tag the data was read at (SQL source), else None. The
+                 content hash (``align.data_vintage``) remains the identity of the data.
     """
 
     returns: pd.DataFrame
@@ -33,6 +35,7 @@ class MarketData:
     candidate: str
     asset_class: pd.Series
     backfilled: pd.Series
+    vintage_tag: str | None = None
 
     def __post_init__(self) -> None:
         periods_per_year(self.freq)

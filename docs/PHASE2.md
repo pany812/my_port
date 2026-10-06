@@ -117,7 +117,12 @@ experiments, corridor, cells, paths, evidence, libraries, memo). Read-only Strea
 corridor, drill into any cell (weights, diagnostics, path), compare libraries. New
 dependency: `streamlit`.
 
-**P2-M8 Real data (data-gated).** `PostgresLoader` behind the existing `Loader` protocol (no
+**P2-M8 Real data (data-gated).** *P2-M8a built 2026-10-06*: data contract
+(docs/DATA_CONTRACT.md) and `SqlLoader` (`data.source: sql`), point-in-time vintages, proxy
+backfill, file-based SAA versions hashed into the experiment id, `data_source` /
+`data_vintage_tag` registry columns, `wb data check` / `wb data demo`, PostgreSQL extra with an
+opt-in integration suite (passed against postgres:17). *P2-M8b* (map the house tables, real SAA
+and candidate, registry on the house server) waits for the answers below. `PostgresLoader` behind the existing `Loader` protocol (no
 live Bloomberg); the real SAA as an `SAA` version; the first real candidate; the registry on
 PostgreSQL; data vintage tags next to the content hash.
 

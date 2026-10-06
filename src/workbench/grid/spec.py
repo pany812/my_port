@@ -45,6 +45,28 @@ class SyntheticParams:
 
 
 @dataclass(frozen=True)
+class SqlSourceSpec:
+    """SQL data source (P2-M8): the data-contract views ``wb_assets`` and ``wb_returns``
+    (docs/DATA_CONTRACT.md).
+
+    url_env:         environment variable holding the SQLAlchemy URL (never the URL itself).
+    schema:          database schema of the contract views (None = the connection's default).
+    vintage:         "latest" or a vintage tag: per period, the latest row with vintage <= tag.
+    live_start:      the candidate's first live period; earlier observations are backfilled.
+    candidate_proxy: asset id spliced in before ``live_start`` (flagged backfilled), or None.
+    """
+
+    url_env: str = "WB_DATA_URL"
+    schema: str | None = None
+    vintage: str = "latest"
+    live_start: str | None = None
+    candidate_proxy: str | None = None
+
+
+DATA_SOURCES = ("synthetic", "sql")
+
+
+@dataclass(frozen=True)
 class DataSpec:
     """Data source and conventions. ``base_currency`` and ``hedging`` are always explicit."""
 
@@ -56,6 +78,7 @@ class DataSpec:
     hedging: str
     candidate: str
     synthetic: SyntheticParams | None = None
+    sql: SqlSourceSpec | None = None  # P2-M8; enters the canonical form only when set
 
 
 @dataclass(frozen=True)
@@ -230,9 +253,12 @@ class ExperimentSpec:
         rebalance = asdict(self.rebalance)
         if rebalance["band"] is None:
             del rebalance["band"]
+        data = asdict(self.data)
+        if data["sql"] is None:
+            del data["sql"]
         out = {
             "seed": self.seed,
-            "data": asdict(self.data),
+            "data": data,
             "saa": {"version": self.saa_version},
             "funding": self.funding,
             "window": asdict(self.window),
@@ -359,8 +385,10 @@ def _data(d: Any) -> DataSpec:
         d,
         "data",
         required={"source", "frequency", "start", "end", "base_currency", "hedging", "candidate"},
-        optional={"synthetic"},
+        optional={"synthetic", "sql"},
     )
+    if d["source"] not in DATA_SOURCES:
+        raise SpecError(f"data.source must be one of {list(DATA_SOURCES)}, got {d['source']!r}")
     try:
         periods_per_year(d["frequency"])
     except ValueError as e:
@@ -374,6 +402,20 @@ def _data(d: Any) -> DataSpec:
         synthetic = SyntheticParams(**s)
     elif "synthetic" in d:
         raise SpecError("data.synthetic is only allowed with source: synthetic")
+    sql = None
+    if d["source"] == "sql":
+        q = _keys(d.get("sql", {}), "data.sql",
+                  optional=set(SqlSourceSpec.__dataclass_fields__))  # fmt: skip
+        for k in ("live_start",):
+            if q.get(k) is not None:
+                q[k] = _period_str(q[k])
+        sql = SqlSourceSpec(**{k: (None if v is None else str(v)) for k, v in q.items()})
+        if sql.candidate_proxy is not None and sql.live_start is None:
+            raise SpecError("data.sql.candidate_proxy needs data.sql.live_start")
+        if sql.candidate_proxy == str(d["candidate"]):
+            raise SpecError("data.sql.candidate_proxy must differ from the candidate")
+    elif "sql" in d:
+        raise SpecError("data.sql is only allowed with source: sql")
     return DataSpec(
         source=str(d["source"]),
         frequency=str(d["frequency"]),
@@ -383,6 +425,7 @@ def _data(d: Any) -> DataSpec:
         hedging=str(d["hedging"]),
         candidate=str(d["candidate"]),
         synthetic=synthetic,
+        sql=sql,
     )
 
 

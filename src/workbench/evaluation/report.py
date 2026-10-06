@@ -150,6 +150,11 @@ def _provenance(exp, spec: ExperimentSpec) -> list[str]:
             ("seed", exp["seed"]),
             ("created", f"{exp['created_at']:%Y-%m-%d %H:%M}" if exp["created_at"] else ""),
             ("data", f"{d.source}, {d.frequency}, {d.start} .. {d.end}"),
+            *(
+                [("data vintage tag", exp["data_vintage_tag"])]
+                if exp.get("data_vintage_tag")
+                else []
+            ),
             ("candidate", exp["candidate_id"]),
             ("currency / hedging", f"{d.base_currency} / {d.hedging}"),
             ("SAA version", exp["saa_version"]),

@@ -57,6 +57,7 @@ def provenance(registry: Registry, experiment_id: str) -> pd.DataFrame:
         ("riskfolio-lib", exp["riskfolio_version"]), ("seed", str(exp["seed"])),
         ("created", f"{exp['created_at']:%Y-%m-%d %H:%M}" if exp["created_at"] else ""),
         ("data", f"{d.source}, {d.frequency}, {d.start} .. {d.end}"),
+        ("data vintage tag", exp.get("data_vintage_tag") or "–"),
         ("currency / hedging", f"{d.base_currency} / {d.hedging}"),
         ("candidate", exp["candidate_id"]), ("SAA version", exp["saa_version"]),
         ("mode", spec.backtest.mode),

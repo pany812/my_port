@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ui = ["streamlit==1.65.0"]  # read-only workbench UI (`wb ui`, P2-M7)
+postgres = ["psycopg[binary]==3.3.6"]  # PostgreSQL registry and data source (P2-M8)
 
 [project.scripts]
 wb = "workbench.cli:main"
@@ -24,6 +25,7 @@ dev = [
     "pytest",
     "ruff",
     "streamlit==1.65.0",  # so the UI tests run; keep in step with the ui extra
+    "psycopg[binary]==3.3.6",  # opt-in PostgreSQL tests; keep in step with the postgres extra
 ]
 
 [build-system]

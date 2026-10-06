@@ -63,10 +63,16 @@ class _Context:
     policies: dict[str, CompiledPolicy]
 
 
-def experiment_id_for(spec_hash: str, vintage: str, riskfolio_version: str) -> str:
-    """Deterministic id: same spec + data vintage + Riskfolio-Lib version => same id."""
-    key = f"{spec_hash}|{vintage}|{riskfolio_version}".encode()
-    return hashlib.sha256(key).hexdigest()[:16]
+def experiment_id_for(
+    spec_hash: str, vintage: str, riskfolio_version: str, saa_hash: str | None = None
+) -> str:
+    """Deterministic id: same spec + data vintage + Riskfolio-Lib version (+ the content of a
+    file-based SAA version, P2-M8) => same id. Code SAA versions add nothing, so ids of
+    existing experiments are unchanged."""
+    key = f"{spec_hash}|{vintage}|{riskfolio_version}"
+    if saa_hash is not None:
+        key += f"|saa:{saa_hash}"
+    return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
 def cell_id_for(experiment_id: str, config_id: str, variant: str, window_end: dt.date) -> str:
@@ -90,10 +96,12 @@ def run_experiment(
     spec: ExperimentSpec, registry: Registry, if_exists: IfExists = "skip"
 ) -> RunSummary:
     """Expand the grid, fit every cell and write the experiment to ``registry``."""
-    data = align_history(load_market(spec.data, spec.seed))
+    saa = SAA.from_version(spec.saa_version, spec.data.candidate)
+    data = align_history(load_market(spec.data, spec.seed, saa))
     vintage = data_vintage(data)
     rf_version = riskfolio.__version__
-    exp_id = experiment_id_for(spec.spec_hash, vintage, rf_version)
+    saa_hash = saa.content_hash() if saa.source == "file" else None
+    exp_id = experiment_id_for(spec.spec_hash, vintage, rf_version, saa_hash)
 
     if registry.has_experiment(exp_id):
         if if_exists == "skip":
@@ -104,7 +112,6 @@ def run_experiment(
             raise ValueError(f"experiment {exp_id} already exists")
         registry.delete_experiment(exp_id)
 
-    saa = SAA.from_version(spec.saa_version, spec.data.candidate)
     if set(saa.assets) != set(data.assets):
         raise ValueError(f"SAA assets {saa.assets} do not match data assets {data.assets}")
     if spec.cma is not None:
@@ -158,6 +165,8 @@ def run_experiment(
             "riskfolio_version": rf_version,
             "seed": spec.seed,
             "created_at": dt.datetime.now(dt.UTC),
+            "data_source": spec.data.source,
+            "data_vintage_tag": data.vintage_tag,
         },
         records,
         oos_rows,

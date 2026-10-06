@@ -1,0 +1,14 @@
+# The synthetic placeholder SAA as a file version (P2-M8): an exact twin of `example`, used
+# to exercise file-based SAA versions. Real versions sit next to it, e.g. house_2026.yaml.
+version: synthetic_example
+description: "Synthetic placeholder SAA (not a real allocation)"
+candidate_class: alternatives
+assets:
+  SE_EQ: {class: equity, weight: 0.15, min: 0.1, max: 0.2}
+  GL_EQ: {class: equity, weight: 0.3, min: 0.25, max: 0.35}
+  EM_EQ: {class: equity, weight: 0.05, min: 0.0, max: 0.08}
+  SE_GOV: {class: fixed_income, weight: 0.2, min: 0.15, max: 0.25}
+  GL_IG_H: {class: fixed_income, weight: 0.15, min: 0.1, max: 0.2}
+  HY: {class: fixed_income, weight: 0.05, min: 0.0, max: 0.08}
+  REAL_EST: {class: real_assets, weight: 0.05, min: 0.0, max: 0.08}
+  CASH: {class: cash, weight: 0.05, min: 0.0, max: 0.1}

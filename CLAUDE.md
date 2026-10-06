@@ -26,7 +26,8 @@ Same spec + same data vintage ⇒ same `spec_hash` ⇒ identical weights.
 
 ```
 src/workbench/
-  data/         loaders (PostgreSQL fed by Bloomberg), synthetic generator, history alignment
+  data/         loaders (synthetic; SQL via the data contract, docs/DATA_CONTRACT.md), alignment,
+                data check, demo contract database
   policy/       SAA object, policy compiler -> Riskfolio-Lib constraint tables
   allocators/   Allocator protocol + implementations (static, naive, riskfolio_*)
   grid/         spec parsing, deterministic grid expansion, runner with failure capture
@@ -117,6 +118,17 @@ tests/          pytest, synthetic fixtures only
   off (Streamlit's defaults are all interfaces and telemetry on) and no Deploy button;
   `.streamlit/config.toml` repeats this. `streamlit==1.65.0` is the optional extra `ui` and in
   the dev group; UI tests skip without it.
+- Real data (P2-M8a): `data.source: sql` reads the contract views through `data/sql.py`
+  (read-only engine, URL from an environment variable, never in specs or the registry; messages
+  redact passwords). Vintages are point in time (greatest vintage <= tag per period); finer data
+  are compounded, partial periods dropped; dates align by period. `live_start` /
+  `candidate_proxy` flag and fill the candidate's backfill. Experiments record `data_source` and
+  `data_vintage_tag` (registry columns, backfilled `'synthetic'` / NULL). SAA versions other than
+  `example` / `placeholder` are reviewed files `saa/<version>.yaml` (`$WB_SAA_DIR`); their content
+  hash enters the experiment id (code versions add nothing, so existing ids are unchanged).
+  `wb data check <spec>` before any real run. PostgreSQL: optional extra `postgres`
+  (psycopg 3.3.6); `tests/test_postgres.py` runs with `WB_TEST_POSTGRES_URL` (a `wb_test*`
+  database, e.g. a throwaway `postgres:17` container) and otherwise skips.
 - Max-Sharpe with no feasible positive expected excess return over rf is undefined: both
   mean-risk allocators record `infeasible` with the reason (`policy.skfolio.sharpe_undefined`).
 - Evidence (P2-M1, `evaluation/inference.py`, `evaluation/evidence.py`) is disclosure, never a
@@ -258,8 +270,9 @@ Checked on synthetic data (October 2026):
   TODO(Patrik): location and import name. Inspect it before building `backtest/`; prefer
   extending or wrapping it over duplicating it.
 - Mandate-adherence analyzer. TODO(Patrik): location. Source of policy rules for `policy/`.
-- Data: Bloomberg (blpapi) → PostgreSQL. TODO(Patrik): schema and tables for building-block and
-  candidate returns. Loaders read from PostgreSQL only; no live Bloomberg calls in this package.
+- Data: Bloomberg (blpapi) → PostgreSQL. The workbench reads only the data contract
+  (docs/DATA_CONTRACT.md: views `wb_assets`, `wb_returns`), read-only; no live Bloomberg calls in
+  this package. TODO(Patrik): map the house tables onto the contract views (P2-M8b).
 - UI: Streamlit over the registry (P2-M7, `wb ui`). Local only for now; a shared server against
   PostgreSQL needs authentication in front (SSO via a reverse proxy) and a read-only DB role.
 

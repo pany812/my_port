@@ -15,10 +15,12 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from workbench.data.sql import DataSourceError
 from workbench.evaluation.memo import build_memo
 from workbench.evaluation.report import build_report, headline_text
 from workbench.grid.runner import run_experiment
 from workbench.grid.spec import SpecError, load_spec
+from workbench.policy.saa import SAAError
 from workbench.registry.store import Registry, RegistrySchemaError
 
 DEFAULT_REGISTRY = "sqlite:///out/registry.db"
@@ -36,6 +38,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _migrate(args)
         if args.command == "ui":
             return _ui(args)
+        if args.command == "data":
+            return _data(args)
         registry = _open_registry(args.registry)
         if args.command == "run":
             return _run(args, registry)
@@ -43,7 +47,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return _memo(args, registry)
         return _report(args, registry)
     except (SpecError, KeyError, FileNotFoundError, NotImplementedError,
-            RegistrySchemaError, MemoError, UIError) as e:  # fmt: skip
+            RegistrySchemaError, MemoError, UIError, DataSourceError, SAAError) as e:  # fmt: skip
         sys.stderr.write(f"wb: error: {e}\n")
         return 2
 
@@ -117,6 +121,43 @@ def _ui(args) -> int:
     return subprocess.call(cmd, env={**os.environ, "WB_REGISTRY": args.registry})
 
 
+def _data(args) -> int:
+    if args.data_command == "demo":
+        from workbench.data.demo import write_demo_contract
+
+        if args.url.startswith("sqlite:///"):
+            Path(args.url.removeprefix("sqlite:///")).parent.mkdir(parents=True, exist_ok=True)
+        try:
+            s = write_demo_contract(args.url, seed=args.seed)
+        except ValueError as e:
+            raise DataSourceError(str(e)) from None
+        _emit(
+            f"wrote the demo data contract to {s['url']}: {s['assets']} assets, "
+            f"{s['rows']} rows, vintage {s['vintage']}, candidate live from {s['live_start']}\n"
+            f"try: WB_DATA_URL={s['url']} wb data check specs/example_sql.yaml\n"
+        )
+        return 0
+    from workbench.data.check import data_check
+
+    spec = load_spec(args.spec)
+    dc = data_check(spec)
+    out = _out_dir(args.out, spec.experiment)
+    out.mkdir(parents=True, exist_ok=True)
+    path = out / "data_check.csv"
+    dc.assets.to_csv(path, index=False)
+    fmt = {
+        c: (lambda v: "–" if v != v else f"{v:.2%}")
+        for c in ("ann_return", "ann_vol", "worst", "best", "backfilled_share")
+    }
+    _emit(
+        dc.summary.to_string(index=False, header=False)
+        + "\n\n"
+        + dc.assets.to_string(index=False, formatters=fmt, na_rep="–")
+        + f"\n\nwrote {path}\n"
+    )
+    return 0 if dc.ok else 1
+
+
 def _migrate(args) -> int:
     reg = _open_registry(args.registry, check=False)
     actions = reg.migrate()
@@ -152,6 +193,19 @@ def _parser() -> argparse.ArgumentParser:
     )
     ui = sub.add_parser("ui", parents=[common], help="browse the registry (read-only, localhost)")
     ui.add_argument("--port", type=int, default=8501, help="port (default: %(default)s)")
+    data = sub.add_parser("data", help="data source tools: check a spec's data, write a demo")
+    dsub = data.add_subparsers(dest="data_command", required=True)
+    chk = dsub.add_parser("check", parents=[common], help="health of a spec's data (no run)")
+    chk.add_argument("spec", type=Path, help="path to specs/<name>.yaml")
+    demo = dsub.add_parser(
+        "demo", parents=[common], help="write a demo data-contract SQLite database (synthetic)"
+    )
+    demo.add_argument(
+        "--url",
+        default="sqlite:///out/demo_data.db",
+        help="SQLite URL to create (default: %(default)s)",
+    )
+    demo.add_argument("--seed", type=int, default=42)
     return p
 
 

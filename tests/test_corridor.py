@@ -16,7 +16,7 @@ END = dt.date(2026, 9, 30)
 SPEC_YAML = """
 experiment: hand
 seed: 1
-data: {source: postgres, frequency: M, start: 2006-01, end: 2026-09, base_currency: SEK,
+data: {source: sql, frequency: M, start: 2006-01, end: 2026-09, base_currency: SEK,
        hedging: none, candidate: CAND}
 saa: {version: example}
 window: {kind: rolling, periods: 12}

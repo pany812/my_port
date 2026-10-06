@@ -96,7 +96,8 @@ def test_empty_reads(reg):
 
 
 def _old_style_registry(tmp_path):
-    """A registry as written before P2-M2: oos_returns without cost / net / liquidity columns."""
+    """A registry as written before P2-M2: oos_returns without cost / net / liquidity columns
+    (and experiments without the P2-M8 data_source / data_vintage_tag)."""
     from sqlalchemy import text
 
     url = f"sqlite:///{tmp_path / 'old.db'}"
@@ -105,6 +106,8 @@ def _old_style_registry(tmp_path):
     with reg.engine.begin() as conn:
         for col in ("cost", "portfolio_return_net", "liquidity_adjusted"):
             conn.execute(text(f"ALTER TABLE oos_returns DROP COLUMN {col}"))
+        for col in ("data_source", "data_vintage_tag"):
+            conn.execute(text(f"ALTER TABLE experiments DROP COLUMN {col}"))
         conn.execute(text("INSERT INTO oos_returns (experiment_id, config_id, data_variant, date, "
                           "portfolio_return, turnover) VALUES ('exp1', 'c', 'full', '2020-01-31', "
                           "0.012, 0.0)"))  # fmt: skip
@@ -124,11 +127,13 @@ def test_migrate_adds_columns_and_backfills_exactly(tmp_path):
     url = _old_style_registry(tmp_path)
     reg = Registry(url, check=False)
     actions = reg.migrate()
-    assert len(actions) == 3 and reg.schema_drift() == {}
+    assert len(actions) == 5 and reg.schema_drift() == {}
     oos = Registry(url).oos_returns("exp1")  # opens cleanly now
     row = oos.iloc[0]
     assert row.cost == 0.0 and row.portfolio_return_net == row.portfolio_return == 0.012
     assert not row.liquidity_adjusted
+    e = Registry(url).experiment("exp1")
+    assert e["data_source"] == "synthetic" and e["data_vintage_tag"] is None  # exact for old rows
     assert Registry(url, check=False).migrate() == []  # idempotent
 
 

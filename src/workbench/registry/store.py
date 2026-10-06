@@ -6,13 +6,13 @@ import datetime as dt
 import json
 from collections.abc import Iterable
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine, delete, event, insert, inspect, select, text
+from sqlalchemy import delete, event, insert, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from workbench.db import engine, redact
 from workbench.registry.models import Base, Cell, Evidence, Experiment, Metric, OosReturn, Weight
 
 # Pseudo-allocator for the SAA benchmark row written once per (variant, window end). It is a
@@ -55,6 +55,7 @@ BACKFILL: dict[tuple[str, str], str] = {
     ("oos_returns", "cost"): "0.0",
     ("oos_returns", "portfolio_return_net"): "portfolio_return",
     ("oos_returns", "liquidity_adjusted"): "0",
+    ("experiments", "data_source"): "'synthetic'",  # P2-M8: every earlier experiment was synthetic
 }
 
 
@@ -72,14 +73,14 @@ class Registry:
     def __init__(self, url: str, check: bool = True, read_only: bool = False) -> None:
         self.url = url
         self.read_only = read_only
-        self.engine: Engine = _engine(url, read_only)
+        self.engine: Engine = engine(url, read_only)
         if self.engine.dialect.name == "sqlite":
             event.listen(self.engine, "connect", _sqlite_foreign_keys)
         if read_only:
             have = set(inspect(self.engine).get_table_names())
             absent = [t for t in Base.metadata.tables if t not in have]
             if absent:
-                raise RegistrySchemaError(f"{url} is not a workbench registry (no tables "
+                raise RegistrySchemaError(f"{redact(url)} is not a workbench registry (no tables "
                                           f"{absent}); run an experiment first")  # fmt: skip
         else:
             Base.metadata.create_all(self.engine)
@@ -87,8 +88,8 @@ class Registry:
         if check and drift:
             missing = "; ".join(f"{t}: {', '.join(c)}" for t, c in drift.items())
             raise RegistrySchemaError(
-                f"registry {url} predates this version (missing columns: {missing}). "
-                f"Run: wb migrate --registry {url}"
+                f"registry {redact(url)} predates this version (missing columns: {missing}). "
+                f"Run: wb migrate --registry <the same URL>"
             )
 
     def schema_drift(self) -> dict[str, list[str]]:
@@ -298,22 +299,6 @@ def _grid_only(query, include_reference: bool):
 
 def _dumps(obj) -> str:
     return json.dumps(obj, sort_keys=True, default=str)
-
-
-def _engine(url: str, read_only: bool) -> Engine:
-    """SQLAlchemy engine; read-only mode is enforced by the database, not by convention."""
-    if not read_only:
-        return create_engine(url)
-    if url.startswith("sqlite:///"):
-        path = url.removeprefix("sqlite:///")
-        if path in ("", ":memory:"):
-            raise ValueError("an in-memory SQLite registry cannot be opened read-only")
-        if not Path(path).exists():
-            raise FileNotFoundError(f"no registry at {path}")
-        return create_engine(f"sqlite:///file:{Path(path).resolve()}?mode=ro&uri=true")
-    if url.startswith(("postgresql", "postgres")):
-        return create_engine(url, connect_args={"options": "-c default_transaction_read_only=on"})
-    raise ValueError(f"read-only mode is supported for SQLite and PostgreSQL, not {url}")
 
 
 def _sqlite_foreign_keys(dbapi_conn, _record) -> None:

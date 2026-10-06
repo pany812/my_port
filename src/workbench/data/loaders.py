@@ -9,10 +9,12 @@ from workbench.data.synthetic import CandidateSpec, generate
 
 if TYPE_CHECKING:
     from workbench.grid.spec import DataSpec
+    from workbench.policy.saa import SAA
 
 
-def load_market(spec: DataSpec, seed: int) -> MarketData:
-    """Load the market described by ``spec``. Synthetic draws use ``seed``."""
+def load_market(spec: DataSpec, seed: int, saa: SAA | None = None) -> MarketData:
+    """Load the market described by ``spec``. Synthetic draws use ``seed``; the SQL source reads
+    the SAA's assets and the candidate through the data contract (``data.sql``)."""
     if spec.source == "synthetic":
         s = spec.synthetic
         cand = CandidateSpec(
@@ -32,6 +34,10 @@ def load_market(spec: DataSpec, seed: int) -> MarketData:
             candidate=cand,
             tail_df=s.tail_df,
         )
-    if spec.source == "postgres":
-        raise NotImplementedError("PostgreSQL loader awaits the schema (see CLAUDE.md TODO)")
+    if spec.source == "sql":
+        from workbench.data.sql import load_sql
+
+        if saa is None:
+            raise ValueError("the SQL source needs the SAA (its assets and classes)")
+        return load_sql(spec, saa.assets, saa.asset_class).market
     raise ValueError(f"unknown data source {spec.source!r}")

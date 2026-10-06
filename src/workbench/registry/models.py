@@ -3,7 +3,8 @@
 Schema per docs/PHASE1.md plus four approved ``cells`` columns (``config_id``, ``cell_index``,
 ``data_variant``, ``diagnostics_json``), the approved ``oos_returns`` table (M5) and the
 approved ``evidence`` table (P2-M1); ``oos_returns`` gained ``cost``, ``portfolio_return_net``
-and ``liquidity_adjusted`` (P2-M2).
+and ``liquidity_adjusted`` (P2-M2); ``experiments`` gained ``data_source`` and
+``data_vintage_tag`` (P2-M8).
 Ask before changing it.
 """
 
@@ -32,6 +33,8 @@ class Experiment(Base):
     riskfolio_version: Mapped[str] = mapped_column(String(20))
     seed: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime(timezone=True))
+    data_source: Mapped[str | None] = mapped_column(String(20), nullable=True)  # P2-M8
+    data_vintage_tag: Mapped[str | None] = mapped_column(String(100), nullable=True)  # P2-M8
 
 
 class Cell(Base):

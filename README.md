@@ -52,7 +52,7 @@ frequency in `workbench.units`, never elsewhere.
 experiment: my_candidate_v1          # cosmetic name; not part of spec_hash
 seed: 42                             # stored in the registry; drives synthetic data
 data:
-  source: synthetic                  # synthetic | postgres (loader pending)
+  source: synthetic                  # synthetic | sql (data contract, see below)
   frequency: M                       # one return frequency per experiment
   start: 2006-01
   end: 2026-09
@@ -154,6 +154,24 @@ periods.
 each target implies per lens and the realised share. Downside lenses `MSV`, `FLPM`, `SLPM` work
 in `rm` and `risk_lenses`; denoised covariances `fixed`, `spectral`, `shrink` in `method_cov`.
 Add `SCS` to `solvers` for risk budgets. See `specs/example_risk_budgets.yaml`.
+
+**Real data (SQL source).** `data.source: sql` reads returns through the data contract
+([docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md)): two views, `wb_assets` and `wb_returns`, that
+the database team maps onto the house tables. The URL comes from an environment variable
+(`WB_DATA_URL`); the connection is read-only. `data.sql.vintage` picks a load tag (point in time)
+or `latest`; finer data are compounded to the experiment's frequency; `live_start` and
+`candidate_proxy` handle the candidate's backfill. SAA versions other than the placeholder are
+reviewed files `saa/<version>.yaml`. Check the data before running: `wb data check
+specs/<name>.yaml` (coverage, gaps, outliers, backfill, alignment). Try it without real data:
+
+```bash
+uv run wb data demo                                   # synthetic data in contract tables
+WB_DATA_URL=sqlite:///out/demo_data.db uv run wb data check specs/example_sql.yaml
+WB_DATA_URL=sqlite:///out/demo_data.db uv run wb run specs/example_sql.yaml
+```
+
+The registry runs on PostgreSQL with the `postgres` extra (`uv sync --extra postgres`, then
+`--registry postgresql+psycopg://...`).
 
 **Return assumptions (CMA).** `method_mu: cma` in `grid.estimators` takes expected returns from
 the spec's `cma` section instead of the window's history, so CMA vs historical means is a grid

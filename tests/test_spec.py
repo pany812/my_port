@@ -99,12 +99,17 @@ def test_spec_built_from_dict_dumps_yaml(raw):
     assert parse_spec(spec.yaml_text).spec_hash == spec.spec_hash
 
 
-def test_dump_round_trips_for_postgres_and_expanding(raw):
-    raw["data"]["source"] = "postgres"
+def test_dump_round_trips_for_sql_and_expanding(raw):
+    raw["data"]["source"] = "sql"
     raw["data"].pop("synthetic")
+    raw["data"]["sql"] = {"live_start": "2016-01", "candidate_proxy": "CAND_PROXY"}
     raw["window"] = {"kind": "expanding", "min_periods": 36}
     spec = parse_spec(raw)
+    assert spec.data.sql.url_env == "WB_DATA_URL" and spec.data.sql.vintage == "latest"
     assert parse_spec(spec.yaml_text).spec_hash == spec.spec_hash
+    raw["data"]["source"] = "postgres"
+    with pytest.raises(SpecError, match="data.source must be one of"):
+        parse_spec(raw)
 
 
 def test_readme_spec_example_parses():
