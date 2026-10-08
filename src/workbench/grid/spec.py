@@ -54,6 +54,8 @@ class SqlSourceSpec:
     vintage:         "latest" or a vintage tag: per period, the latest row with vintage <= tag.
     live_start:      the candidate's first live period; earlier observations are backfilled.
     candidate_proxy: asset id spliced in before ``live_start`` (flagged backfilled), or None.
+    benchmark:       the official SAA benchmark series (kind ``benchmark``), read only by
+                     ``wb data check`` to reconcile the building blocks (P2-M8b), or None.
     """
 
     url_env: str = "WB_DATA_URL"
@@ -61,6 +63,7 @@ class SqlSourceSpec:
     vintage: str = "latest"
     live_start: str | None = None
     candidate_proxy: str | None = None
+    benchmark: str | None = None  # enters the canonical form only when set
 
 
 DATA_SOURCES = ("synthetic", "sql")
@@ -256,6 +259,8 @@ class ExperimentSpec:
         data = asdict(self.data)
         if data["sql"] is None:
             del data["sql"]
+        elif data["sql"]["benchmark"] is None:
+            del data["sql"]["benchmark"]
         out = {
             "seed": self.seed,
             "data": data,

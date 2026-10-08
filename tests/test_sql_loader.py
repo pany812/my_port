@@ -57,7 +57,8 @@ def test_demo_round_trip_equals_the_synthetic_market(demo):
     pd.testing.assert_frame_equal(m.returns, g.returns[SAA_FILE.assets], check_freq=False)
     assert (m.backfilled.to_numpy() == g.backfilled.to_numpy()).all()
     assert data_vintage(align_history(m)) == data_vintage(align_history(g))
-    assert set(read.assets["kind"]) == {"block", "cash", "candidate", "proxy"}
+    assert set(read.assets["kind"]) == {"block", "cash", "candidate", "proxy", "benchmark"}
+    assert read.benchmark is not None and read.benchmark.notna().all()
     assert hashlib.sha256(path.read_bytes()).hexdigest() == before  # read-only
 
 
@@ -306,3 +307,49 @@ def test_cli_data_demo_and_check(tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "vintage tag" in out and "candidate" in out and "alignment" in out
     assert (tmp_path / "out" / "sql_demo_v1" / "data_check.csv").exists()
+
+
+# --- benchmark reconciliation (P2-M8b) ---------------------------------------------------------
+
+
+def test_demo_benchmark_reconciles_exactly(demo, monkeypatch):
+    url, _ = demo
+    monkeypatch.setenv("WB_DATA_URL", url)
+    dc = data_check(parse_spec(yaml.safe_load(SPEC.read_text())))
+    t = dc.reconciliation
+    assert len(t) == 26 and (t["diff_bp"].abs() < 1e-9).all() and (t["flag"] == "").all()
+    assert dc.summary.set_index("field").loc["reconciliation", "value"].startswith("ok: 26 years")
+
+
+def test_reconciliation_flags_a_year_that_drifts(tmp_path, monkeypatch):
+    rows = _monthly(value=0.01)
+    saa_w = SAA_FILE.weights.drop("CAND")
+    for d in pd.date_range("2018-01-31", periods=36, freq="ME"):
+        bump = 0.0005 if d.year == 2019 else 0.0  # 5 bp a month in 2019: ~60 bp for the year
+        rows.append(
+            {
+                "asset_id": "BENCH",
+                "period_end": d.date(),
+                "frequency": "M",
+                "vintage": "v1",
+                "simple_return": float(0.01 * saa_w.sum()) + bump,
+            }
+        )
+    assets = {a: "block" for a in SAA_FILE.assets} | {"CAND": "candidate", "BENCH": "benchmark"}
+    url = _contract(tmp_path, rows, assets)
+    monkeypatch.setenv("WB_DATA_URL", url)
+    raw = yaml.safe_load(SPEC.read_text())
+    raw["data"].update(start="2018-01", end="2020-12")
+    raw["data"]["sql"] = {"vintage": "latest", "benchmark": "BENCH"}
+    dc = data_check(parse_spec(raw))
+    t = dc.reconciliation.set_index("year")
+    assert t.loc[2019, "flag"] == "⚠" and t.loc[2018, "flag"] == t.loc[2020, "flag"] == ""
+    assert t.loc[2019, "diff_bp"] == pytest.approx((1.01**12 - 1.0105**12) * 1e4, abs=1e-6)
+    assert dc.ok  # advisory: the data can still run
+    assert dc.summary.set_index("field").loc["reconciliation", "value"].startswith("⚠ 1 of 3")
+
+
+def test_benchmark_key_enters_the_hash_only_when_set():
+    raw = yaml.safe_load(SPEC.read_text())
+    raw["data"]["sql"].pop("benchmark")
+    assert "benchmark" not in parse_spec(raw).canonical()["data"]["sql"]

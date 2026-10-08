@@ -41,7 +41,7 @@ def contract_tables(metadata: sa.MetaData, schema: str | None = None) -> tuple[s
 def write_demo_contract(
     url: str, seed: int = 42, start: str = "2001-01", end: str = "2026-09",
     live_start: str = "2016-01", candidate: str = "CAND", proxy: str = "CAND_PROXY",
-    vintage: str = DEMO_VINTAGE, schema: str | None = None,
+    vintage: str = DEMO_VINTAGE, schema: str | None = None, benchmark: str = "SAA_BENCH",
 ) -> dict:  # fmt: skip
     """Create the contract tables in an empty SQLite database and fill them. Returns a summary."""
     if not url.startswith("sqlite:///"):
@@ -69,7 +69,10 @@ def write_demo_contract(
         rows += [{"asset_id": candidate, "kind": "candidate", "currency": "SEK", "hedged": True,
                   "description": "synthetic candidate (live from live_start)"},
                  {"asset_id": proxy, "kind": "proxy", "currency": "SEK", "hedged": True,
-                  "description": "synthetic proxy for the candidate's backfill"}]  # fmt: skip
+                  "description": "synthetic proxy for the candidate's backfill"},
+                 {"asset_id": benchmark, "kind": "benchmark", "currency": "SEK", "hedged": False,
+                  "description": "official SAA benchmark (synthetic: the blocks at SAA weights, "
+                                 "rebalanced monthly)"}]  # fmt: skip
         c.execute(sa.insert(assets_t), rows)
         r = market.returns
         # the last business day of each month, as many databases store month ends
@@ -84,6 +87,10 @@ def write_demo_contract(
                             "vintage": vintage, "simple_return": float(v)})  # fmt: skip
         for b, v in zip(bday, r[candidate], strict=True):
             out.append({"asset_id": proxy, "period_end": b.date(), "frequency": "M",
+                        "vintage": vintage, "simple_return": float(v)})  # fmt: skip
+        bench = r[blocks] @ PLACEHOLDER_SAA["weight"][blocks]
+        for b, v in zip(bday, bench, strict=True):
+            out.append({"asset_id": benchmark, "period_end": b.date(), "frequency": "M",
                         "vintage": vintage, "simple_return": float(v)})  # fmt: skip
         c.execute(sa.insert(returns_t), out)
     eng.dispose()

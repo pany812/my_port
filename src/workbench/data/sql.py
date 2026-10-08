@@ -33,7 +33,7 @@ from workbench.units import periods_per_year
 
 ASSETS_VIEW = "wb_assets"
 RETURNS_VIEW = "wb_returns"
-KINDS = ("block", "candidate", "proxy", "cash")
+KINDS = ("block", "candidate", "proxy", "cash", "benchmark")
 PANDAS_PERIOD = {"D": "B", "W": "W-FRI", "M": "M", "Q": "Q", "A": "Y"}
 MIN_PERIOD_COVERAGE = 0.5
 
@@ -50,6 +50,7 @@ class SqlRead:
     vintage_tag: str
     assets: pd.DataFrame  # wb_assets rows for the requested ids
     source_frequency: dict[str, str]  # asset -> frequency used before compounding
+    benchmark: pd.Series | None = None  # the SAA benchmark per period (data.sql.benchmark)
 
 
 def _views(schema: str | None):
@@ -99,7 +100,8 @@ def load_sql(
     src = data_spec.sql
     url = url or database_url(src.url_env)
     candidate, freq = data_spec.candidate, data_spec.frequency
-    ids = list(dict.fromkeys([*assets, *([src.candidate_proxy] if src.candidate_proxy else [])]))
+    extra = [x for x in (src.candidate_proxy, src.benchmark) if x]
+    ids = list(dict.fromkeys([*assets, *extra]))
     a_view, r_view = _views(src.schema)
     eng = engine(url, read_only=True)
     try:
@@ -173,8 +175,10 @@ def load_sql(
         if src.candidate_proxy is not None:
             wide.loc[pre, candidate] = wide.loc[pre, src.candidate_proxy]
         backfilled[pre] = wide.loc[pre, candidate].notna()
+    bench = wide[src.benchmark].rename("benchmark") if src.benchmark else None
     wide = wide[assets]
     market = MarketData(returns=wide, freq=freq, candidate=candidate,
                         asset_class=asset_class.reindex(assets), backfilled=backfilled,
                         vintage_tag=str(tag))  # fmt: skip
-    return SqlRead(market, str(tag), meta.set_index("asset_id").loc[ids].reset_index(), used)
+    meta = meta.set_index("asset_id").loc[ids].reset_index()
+    return SqlRead(market, str(tag), meta, used, bench)

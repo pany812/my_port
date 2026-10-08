@@ -171,7 +171,9 @@ WB_DATA_URL=sqlite:///out/demo_data.db uv run wb run specs/example_sql.yaml
 ```
 
 The registry runs on PostgreSQL with the `postgres` extra (`uv sync --extra postgres`, then
-`--registry postgresql+psycopg://...`).
+`--registry postgresql+psycopg://...`). The house deployment (schemas, read-only roles, the views
+over the house tables) is `sql/roles.sql` and `sql/contract_views.sql`; see the data contract.
+With `data.sql.benchmark`, `wb data check` reconciles the SAA to the official benchmark per year.
 
 **Return assumptions (CMA).** `method_mu: cma` in `grid.estimators` takes expected returns from
 the spec's `cma` section instead of the window's history, so CMA vs historical means is a grid

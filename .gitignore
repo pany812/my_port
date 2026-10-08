@@ -7,3 +7,7 @@ out/
 *.sqlite
 *.db
 .DS_Store
+
+# local credentials (WB_DATA_URL, WB_REGISTRY, ...): never committed
+.env
+.env.*

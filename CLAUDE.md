@@ -85,8 +85,8 @@ tests/          pytest, synthetic fixtures only
   included; `(1 + r)^(1/n) - 1`). Point in time: a fit uses the latest vector effective on or
   before its date; a fit before the first vector is a `SpecError`, never a silent look-ahead.
   The resolved values enter the canonical form, so `spec_hash` changes when a CMA does.
-  `placeholder` is the synthetic truth (an oracle). SAA weights are still hashed by version
-  name only (fix with real SAA versions, P2-M8).
+  `placeholder` is the synthetic truth (an oracle). Code SAA versions are identified by name;
+  file versions (`saa/<version>.yaml`) by content, via the experiment id (P2-M8a).
 - Black–Litterman (P2-M4, `allocators/_bl.py`): the SAA is the prior, `pi = delta Sigma w_SAA`
   with `delta = prior_sharpe / sigma_SAA` (positive, frequency-free); one view on the candidate;
   our posterior formula, verified against both libraries. BL changes mu only (covariance stays
@@ -126,7 +126,11 @@ tests/          pytest, synthetic fixtures only
   `data_vintage_tag` (registry columns, backfilled `'synthetic'` / NULL). SAA versions other than
   `example` / `placeholder` are reviewed files `saa/<version>.yaml` (`$WB_SAA_DIR`); their content
   hash enters the experiment id (code versions add nothing, so existing ids are unchanged).
-  `wb data check <spec>` before any real run. PostgreSQL: optional extra `postgres`
+  `wb data check <spec>` before any real run; with `data.sql.benchmark` it reconciles the
+  building-block SAA to the official benchmark per calendar year (advisory, 10 bp). Deployment:
+  `sql/roles.sql` + `sql/contract_views.sql` (schemas `workbench_data`, `workbench`; roles
+  `wb_data_reader`, `wb_writer`, `wb_ui`; asset map), tested by `tests/test_postgres_deploy.py`.
+  PostgreSQL: optional extra `postgres`
   (psycopg 3.3.6); `tests/test_postgres.py` runs with `WB_TEST_POSTGRES_URL` (a `wb_test*`
   database, e.g. a throwaway `postgres:17` container) and otherwise skips.
 - Max-Sharpe with no feasible positive expected excess return over rf is undefined: both

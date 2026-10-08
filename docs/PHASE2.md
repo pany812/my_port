@@ -121,8 +121,12 @@ dependency: `streamlit`.
 (docs/DATA_CONTRACT.md) and `SqlLoader` (`data.source: sql`), point-in-time vintages, proxy
 backfill, file-based SAA versions hashed into the experiment id, `data_source` /
 `data_vintage_tag` registry columns, `wb data check` / `wb data demo`, PostgreSQL extra with an
-opt-in integration suite (passed against postgres:17). *P2-M8b* (map the house tables, real SAA
-and candidate, registry on the house server) waits for the answers below. `PostgresLoader` behind the existing `Loader` protocol (no
+opt-in integration suite (passed against postgres:17). *P2-M8b* decisions 2026-10-06: 1a
+(monthly SEK total returns in the house tables), 2a (load timestamps as vintages), 3a (registry
+schema `workbench` on the house server), 6 yes (benchmark reconciliation). Part 1 built: benchmark
+reconciliation in `wb data check`, deployment kit `sql/roles.sql` + `sql/contract_views.sql`
+(tested on postgres:17 with mock house tables). Part 2 waits for the house table names, the SAA,
+the first candidate and the mandate constraints. `PostgresLoader` behind the existing `Loader` protocol (no
 live Bloomberg); the real SAA as an `SAA` version; the first real candidate; the registry on
 PostgreSQL; data vintage tags next to the content hash.
 

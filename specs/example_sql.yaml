@@ -19,6 +19,7 @@ data:
     vintage: latest               # or a tag, e.g. "2026-10-01T06:00"
     live_start: 2016-01           # earlier candidate periods are backfilled
     candidate_proxy: CAND_PROXY   # spliced in before live_start, flagged
+    benchmark: SAA_BENCH          # official SAA benchmark: `wb data check` reconciles to it
 saa:
   version: synthetic_example      # saa/synthetic_example.yaml
 window: {kind: rolling, periods: 60}

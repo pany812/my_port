@@ -10,7 +10,7 @@ workbench needs nothing else from the database. A demo database with these table
 | column | type | meaning |
 |---|---|---|
 | `asset_id` | text, unique | the id used in SAA files and specs (e.g. `SE_EQ`, `CAND`) |
-| `kind` | text | `block` (SAA building block), `cash`, `candidate`, or `proxy` (backfill series) |
+| `kind` | text | `block` (SAA building block), `cash`, `candidate`, `proxy` (backfill series) or `benchmark` (the official SAA benchmark, for reconciliation) |
 | `currency` | text | ISO code of the series (informational; returns must already be in base currency) |
 | `hedged` | boolean | whether the series is currency-hedged to the base currency (informational) |
 | `description` | text | free text (informational) |
@@ -54,6 +54,32 @@ of observations is dropped as partial. Coarser data are an error.
 The spec's `data.sql.live_start` is the candidate's first live period. Earlier periods are
 flagged as backfilled and, when `candidate_proxy` names a `proxy` series, filled from it. Every
 report then shows a live-only variant alongside the full history.
+
+## Reconciliation
+
+When the spec names the official SAA benchmark (`data.sql.benchmark`, a `benchmark` series),
+`wb data check` rebuilds the SAA from the building blocks (fixed weights, rebalanced monthly) and
+compares calendar-year returns with the benchmark; years more than 10 bp apart are flagged. A
+break usually means a mapping error, a currency or hedging mismatch, or a different rebalancing
+or fee convention in the official series. It is advisory and does not stop a run.
+
+## Deployment (house PostgreSQL)
+
+`sql/roles.sql` then `sql/contract_views.sql`, as an administrator (both idempotent; edit the
+house names marked `EDIT` in the second). They create:
+
+| schema / role | purpose | used as |
+|---|---|---|
+| `workbench_data` | the contract: `asset_map` (maintained by the workbench team) and the two views over the house tables | |
+| `workbench` | the registry, owned by `wb_writer` | |
+| `wb_data_reader` | read-only; SELECT on the two views only, no access to the house tables | `WB_DATA_URL` |
+| `wb_writer` | owns the registry schema (`wb run`, `wb migrate`); maintains `asset_map` | `WB_REGISTRY` for runs |
+| `wb_ui` | read-only on the registry (`wb ui`, `wb report`, `wb memo`) | `WB_REGISTRY` for reading |
+
+The asset map keeps workbench ids (`SE_EQ`, `CAND`, ...) apart from house series keys, so the
+house tables are never changed. Authentication is set by the DBA; keep the URLs in a local `.env`
+(ignored by git) or the shell, never in specs. The kit is tested end to end against PostgreSQL 17
+(`tests/test_postgres_deploy.py`).
 
 ## Access
 

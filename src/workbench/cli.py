@@ -149,10 +149,22 @@ def _data(args) -> int:
         c: (lambda v: "–" if v != v else f"{v:.2%}")
         for c in ("ann_return", "ann_vol", "worst", "best", "backfilled_share")
     }
+    recon = ""
+    if dc.reconciliation is not None:
+        rpath = out / "data_reconciliation.csv"
+        dc.reconciliation.to_csv(rpath, index=False)
+        rfmt = {c: (lambda v: f"{v:.2%}") for c in ("saa_return", "benchmark_return")}
+        rfmt["diff_bp"] = lambda v: f"{v:+.1f}"
+        recon = (
+            "\n\nReconciliation vs the official SAA benchmark (per calendar year):\n"
+            + dc.reconciliation.to_string(index=False, formatters=rfmt)
+            + f"\nwrote {rpath}"
+        )
     _emit(
         dc.summary.to_string(index=False, header=False)
         + "\n\n"
         + dc.assets.to_string(index=False, formatters=fmt, na_rep="–")
+        + recon
         + f"\n\nwrote {path}\n"
     )
     return 0 if dc.ok else 1
